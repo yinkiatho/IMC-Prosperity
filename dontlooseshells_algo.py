@@ -79,9 +79,8 @@ class Logger:
 # This is provisionary, if no other algorithm works.
 # Better to loose nothing, then dreaming of a gain.
 
-database = {
+inner_dict = {
     'TIMESTAMP': [],
-    'PRODUCT': [],
     'MAX_BID': [],
     'MIN_BID': [],
     'MAX_ASK': [],
@@ -90,25 +89,29 @@ database = {
     'ASK_VOLUME': [],
     'VWAP_BID': [],
     'VWAP_ASK': [],    
+    'MID_PRICE': [],
+    'MID_PRICE_DIFF': [],
 }
 
 
 class Trader:
     
-    df = database
-    empty_state = {
-            'TIMESTAMP': [],
-            'PRODUCT': [],
-            'MAX_BID': [],
-            'MIN_BID': [],
-            'MAX_ASK': [],
-            'MIN_ASK': [],
-            'BID_VOLUME': [],
-            'ASK_VOLUME': [],
-            'VWAP_BID': [],
-            'VWAP_ASK': [],    
-        }
-
+    df = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
+    empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
+    
+    
+    # Takes in 'MID_PRICE_DIFF'
+    def rsi_7(self, df):
+        last_7 = df[-7:]
+        gain = sum([x for x in last_7 if x > 0]) / 7
+        loss = -1 * sum([x for x in last_7 if x < 0]) / 7
+        
+        print("Gain: " + str(gain) + ", Loss: " + str(loss))
+        if loss == 0:
+            return 100
+        rs = gain / loss
+        return 100 - (100 / (1 + rs))
+    
     def run(self, state: TradingState):
         #print(self.df)
         print("Timestamp: " + str(state.timestamp))
@@ -117,8 +120,11 @@ class Trader:
         # Decode into df
         try:
         # Decode into df
-            self.df = jsonpickle.decode(state.traderData)
-            print(len(self.df['TIMESTAMP']))
+            if state.traderData == "start":
+                self.df = self.empty_state
+            else:
+                self.df = jsonpickle.decode(state.traderData)
+            print(len(self.df['AMETHYSTS']['TIMESTAMP']))
         except json.JSONDecodeError as e:
             print("Initial State")
             self.df = self.empty_state
@@ -159,6 +165,8 @@ class Trader:
         
 		# Sample conversion request. Check more details below. 
         conversions = 1
+        if len(self.df['AMETHYSTS']['MID_PRICE_DIFF']) > 7:
+            print("Testing RSI 7", self.rsi_7(self.df['AMETHYSTS']['MID_PRICE_DIFF']))
         return result, conversions, traderData
     
     
@@ -174,9 +182,9 @@ class Trader:
             min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
             vwap_ask = 0
             for price, amount in orders_sell.items():
+                vwap_ask += int(price) * amount
                 if int(price) < acceptable_price:
                     print("BUY", str(-amount) + "x", price)
-                    vwap_ask += int(price) * amount
                     orders.append(Order(product, price, -amount))
                     
             vwap_ask = vwap_ask / ask_volume
@@ -185,39 +193,29 @@ class Trader:
             min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
             vwap_bid = 0
             for price, amount in orders_buy.items():
+                vwap_bid += int(price) * amount
                 if int(price) > acceptable_price:
                     print("SELL", str(amount) + "x", price)
-                    vwap_bid += int(price) * amount
                     orders.append(Order(product, price, amount))
             vwap_bid = vwap_bid / bid_volume
         
         
         # Append to database
-        self.df['TIMESTAMP'].append(state.timestamp)
-        self.df['PRODUCT'].append(product)
-        self.df['MAX_BID'].append(max_bid)
-        self.df['MIN_BID'].append(min_bid)
-        self.df['MAX_ASK'].append(max_ask)
-        self.df['MIN_ASK'].append(min_ask)
-        self.df['BID_VOLUME'].append(bid_volume)
-        self.df['ASK_VOLUME'].append(ask_volume)
-        self.df['VWAP_BID'].append(vwap_bid)
-        self.df['VWAP_ASK'].append(vwap_ask)
-        
-        
-        '''
-        self.df = pd.concat([self.df, pd.DataFrame({
-            'TIMESTAMP': [state.timestamp],
-            'PRODUCT': [product],
-            'MAX_BID': [max_bid],
-            'MIN_BID': [min_bid],
-            'MAX_ASK': [max_ask],
-            'MIN_ASK': [min_ask],
-            'BID_VOLUME': [bid_volume],
-            'ASK_VOLUME': [ask_volume],
-            'VWAP_BID': [vwap_bid],
-            'VWAP_ASK': [vwap_ask],    
-        })], ignore_index=True)  '''  
+        self.df['AMETHYSTS']['TIMESTAMP'].append(state.timestamp)
+        self.df['AMETHYSTS']['MAX_BID'].append(max_bid)
+        self.df['AMETHYSTS']['MIN_BID'].append(min_bid)
+        self.df['AMETHYSTS']['MAX_ASK'].append(max_ask)
+        self.df['AMETHYSTS']['MIN_ASK'].append(min_ask)
+        self.df['AMETHYSTS']['BID_VOLUME'].append(bid_volume)
+        self.df['AMETHYSTS']['ASK_VOLUME'].append(ask_volume)
+        self.df['AMETHYSTS']['VWAP_BID'].append(vwap_bid)
+        self.df['AMETHYSTS']['VWAP_ASK'].append(vwap_ask)
+        self.df['AMETHYSTS']['MID_PRICE'].append((vwap_bid + vwap_ask) / 2)
+        if len(self.df['AMETHYSTS']['MID_PRICE']) > 2:
+            self.df['AMETHYSTS']['MID_PRICE_DIFF'].append(((self.df['AMETHYSTS']['MID_PRICE'][-1] - self.df['AMETHYSTS']['MID_PRICE'][-2]) / self.df['AMETHYSTS']['MID_PRICE'][-2]))
+        else:
+            self.df['AMETHYSTS']['MID_PRICE_DIFF'].append(0)
+
         return orders
     
-            # String value holding Trader state data required.
+    

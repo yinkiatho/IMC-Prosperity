@@ -84,7 +84,7 @@ def process_prices(df_prices, round, time_limit) -> dict[int, TradingState]:
             observations: Dict[Product, Observation] = {}
             listings = {}
             depths = {}
-            states[time] = TradingState("start",time, listings, depths, own_trades, market_trades, position, observations)
+            states[time] = TradingState("start" , time , listings, depths, own_trades, market_trades, position, observations)
 
         if product not in states[time].position and product in SYMBOLS_BY_ROUND_POSITIONABLE[round]:
             states[time].position[product] = 0
@@ -215,9 +215,21 @@ def trades_position_pnl_run(
         credit_by_symbol: dict[int, dict[str, float]], 
         unrealized_by_symbol: dict[int, dict[str, float]], 
         ):
+        starting = True
+        traderState = None
         for time, state in states.items():
             position = copy.deepcopy(state.position)
+            if not starting and traderState != None:
+                state.traderData = traderState
+                
             orders, conversions, traderData = trader.run(state)
+            if starting:
+                traderState = traderData
+                starting = False
+                
+            if not starting:
+                traderState = traderData
+                
             trades = clear_order_book(orders, state.order_depths, time, halfway)
             mids = calc_mid(states, round, time, max_time)
             if profits_by_symbol.get(time + TIME_DELTA) == None and time != max_time:
