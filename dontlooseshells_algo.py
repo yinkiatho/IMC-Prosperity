@@ -4,6 +4,8 @@ from typing import Any, Dict, List
 import numpy 
 import math
 import statistics
+import jsonpickle
+import pandas as pd
 
 class Logger:
     # Set this to true, if u want to create
@@ -76,18 +78,64 @@ class Logger:
 
 # This is provisionary, if no other algorithm works.
 # Better to loose nothing, then dreaming of a gain.
+
+database = {
+    'TIMESTAMP': [],
+    'PRODUCT': [],
+    'MAX_BID': [],
+    'MIN_BID': [],
+    'MAX_ASK': [],
+    'MIN_ASK': [],
+    'BID_VOLUME': [],
+    'ASK_VOLUME': [],
+    'VWAP_BID': [],
+    'VWAP_ASK': [],    
+}
+
+
 class Trader:
+    
+    df = database
+    empty_state = {
+            'TIMESTAMP': [],
+            'PRODUCT': [],
+            'MAX_BID': [],
+            'MIN_BID': [],
+            'MAX_ASK': [],
+            'MIN_ASK': [],
+            'BID_VOLUME': [],
+            'ASK_VOLUME': [],
+            'VWAP_BID': [],
+            'VWAP_ASK': [],    
+        }
 
     def run(self, state: TradingState):
-        print("traderData: " + state.traderData)
+        #print(self.df)
+        print("Timestamp: " + str(state.timestamp))
         print("Observations: " + str(state.observations))
+        
+        # Decode into df
+        try:
+        # Decode into df
+            self.df = jsonpickle.decode(state.traderData)
+            print(len(self.df['TIMESTAMP']))
+        except json.JSONDecodeError as e:
+            print("Initial State")
+            self.df = self.empty_state
+        
 
-				# Orders to be placed on exchange matching engine
+	    # Orders to be placed on exchange matching engine
         result = {}
         for product in state.order_depths:
             order_depth: OrderDepth = state.order_depths[product]
             orders: List[Order] = []
-            acceptable_price = 10  # Participant should calculate this value
+            if product == 'AMETHYSTS':
+                amethysts_orders = self.trade_stationary(state, 10000, product)
+                result[product] = amethysts_orders
+                continue
+            else:
+                acceptable_price = 1000
+                
             print("Acceptable price : " + str(acceptable_price))
             print("Buy Order depth : " + str(len(order_depth.buy_orders)) + ", Sell order depth : " + str(len(order_depth.sell_orders)))
     
@@ -107,8 +155,69 @@ class Trader:
     
 		    # String value holding Trader state data required. 
 				# It will be delivered as TradingState.traderData on next execution.
-        traderData = "SAMPLE" 
+        traderData = jsonpickle.encode(self.df)
         
-				# Sample conversion request. Check more details below. 
+		# Sample conversion request. Check more details below. 
         conversions = 1
         return result, conversions, traderData
+    
+    
+    # Simple function trade around stationary price
+    def trade_stationary(self, state: TradingState, acceptable_price: int, product: str):
+        orders: list[Order] = []
+        
+        # Orders to be placed on exchange matching engine
+        orders_sell = state.order_depths[product].sell_orders
+        orders_buy = state.order_depths[product].buy_orders
+        
+        if len(orders_sell) != 0:
+            min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
+            vwap_ask = 0
+            for price, amount in orders_sell.items():
+                if int(price) < acceptable_price:
+                    print("BUY", str(-amount) + "x", price)
+                    vwap_ask += int(price) * amount
+                    orders.append(Order(product, price, -amount))
+                    
+            vwap_ask = vwap_ask / ask_volume
+                    
+        if len(orders_buy) != 0:
+            min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
+            vwap_bid = 0
+            for price, amount in orders_buy.items():
+                if int(price) > acceptable_price:
+                    print("SELL", str(amount) + "x", price)
+                    vwap_bid += int(price) * amount
+                    orders.append(Order(product, price, amount))
+            vwap_bid = vwap_bid / bid_volume
+        
+        
+        # Append to database
+        self.df['TIMESTAMP'].append(state.timestamp)
+        self.df['PRODUCT'].append(product)
+        self.df['MAX_BID'].append(max_bid)
+        self.df['MIN_BID'].append(min_bid)
+        self.df['MAX_ASK'].append(max_ask)
+        self.df['MIN_ASK'].append(min_ask)
+        self.df['BID_VOLUME'].append(bid_volume)
+        self.df['ASK_VOLUME'].append(ask_volume)
+        self.df['VWAP_BID'].append(vwap_bid)
+        self.df['VWAP_ASK'].append(vwap_ask)
+        
+        
+        '''
+        self.df = pd.concat([self.df, pd.DataFrame({
+            'TIMESTAMP': [state.timestamp],
+            'PRODUCT': [product],
+            'MAX_BID': [max_bid],
+            'MIN_BID': [min_bid],
+            'MAX_ASK': [max_ask],
+            'MIN_ASK': [min_ask],
+            'BID_VOLUME': [bid_volume],
+            'ASK_VOLUME': [ask_volume],
+            'VWAP_BID': [vwap_bid],
+            'VWAP_ASK': [vwap_ask],    
+        })], ignore_index=True)  '''  
+        return orders
+    
+            # String value holding Trader state data required.
