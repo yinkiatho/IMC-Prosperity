@@ -6,6 +6,7 @@ import math
 import statistics
 import jsonpickle
 import pandas as pd
+import collections
 
 class Logger:
     # Set this to true, if u want to create
@@ -98,7 +99,7 @@ class Trader:
     
     df = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
     empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
-    
+    pos_limits = {'AMETHYSTS': 10000, 'STARFRUIT': 10000}
     
     # Takes in 'MID_PRICE_DIFF'
     def rsi_7(self, df):
@@ -113,6 +114,7 @@ class Trader:
         return 100 - (100 / (1 + rs))
     
     def run(self, state: TradingState):
+
         #print(self.df)
         print("Timestamp: " + str(state.timestamp))
         print("Observations: " + str(state.observations))
@@ -175,8 +177,11 @@ class Trader:
         orders: list[Order] = []
         
         # Orders to be placed on exchange matching engine
-        orders_sell = state.order_depths[product].sell_orders
-        orders_buy = state.order_depths[product].buy_orders
+        #orders_sell = state.order_depths[product].sell_orders
+        #orders_buy = state.order_depths[product].buy_orders
+        
+        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
+        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
         
         if len(orders_sell) != 0:
             min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
