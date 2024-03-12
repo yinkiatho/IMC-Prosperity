@@ -88,8 +88,6 @@ inner_dict = {
     'MIN_ASK': [],
     'BID_VOLUME': [],
     'ASK_VOLUME': [],
-    'VWAP_BID': [],
-    'VWAP_ASK': [],    
     'MID_PRICE': [],
     'MID_PRICE_DIFF': [],
 }
@@ -113,6 +111,24 @@ class Trader:
         rs = gain / loss
         return 100 - (100 / (1 + rs))
     
+    def z_score(self, df):
+        return (df[-1] - statistics.mean(df)) / statistics.stdev(df)
+    
+    def add_to_df(self, product, data):
+        timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price = data
+        self.df[product]['TIMESTAMP'].append(timestamp)
+        self.df[product]['MAX_BID'].append(max_bid)
+        self.df[product]['MIN_BID'].append(min_bid)
+        self.df[product]['MAX_ASK'].append(max_ask)
+        self.df[product]['MIN_ASK'].append(min_ask)
+        self.df[product]['BID_VOLUME'].append(bid_volume)
+        self.df[product]['ASK_VOLUME'].append(ask_volume)
+        self.df[product]['MID_PRICE'].append(mid_price)
+        if len(self.df[product]['MID_PRICE']) > 2:
+            self.df[product]['MID_PRICE_DIFF'].append(((self.df[product]['MID_PRICE'][-1] - self.df[product]['MID_PRICE'][-2]) / self.df[product]['MID_PRICE'][-2]))
+        else:
+            self.df[product]['MID_PRICE_DIFF'].append(0)
+    
     def run(self, state: TradingState):
 
         #print(self.df)
@@ -134,6 +150,8 @@ class Trader:
 
 	    # Orders to be placed on exchange matching engine
         result = {}
+        #result = self.trade_pair_arbitrage(state, 'AMETHYSTS', 'STARFRUIT')
+        
         for product in state.order_depths:
             order_depth: OrderDepth = state.order_depths[product]
             orders: List[Order] = []
@@ -160,7 +178,7 @@ class Trader:
                     orders.append(Order(product, best_bid, -best_bid_amount))
             
             result[product] = orders
-    
+        
 		    # String value holding Trader state data required. 
 				# It will be delivered as TradingState.traderData on next execution.
         traderData = jsonpickle.encode(self.df)
@@ -175,7 +193,6 @@ class Trader:
     # Simple function trade around stationary price
     def trade_stationary(self, state: TradingState, acceptable_price: int, product: str):
         orders: list[Order] = []
-        
         # Orders to be placed on exchange matching engine
         #orders_sell = state.order_depths[product].sell_orders
         #orders_buy = state.order_depths[product].buy_orders
@@ -183,44 +200,103 @@ class Trader:
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
         
-        if len(orders_sell) != 0:
-            min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
-            vwap_ask = 0
-            for price, amount in orders_sell.items():
-                vwap_ask += int(price) * amount
-                if int(price) < acceptable_price:
-                    print("BUY", str(-amount) + "x", price)
-                    orders.append(Order(product, price, -amount))
-                    
-            vwap_ask = vwap_ask / ask_volume
-                    
         if len(orders_buy) != 0:
             min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
-            vwap_bid = 0
             for price, amount in orders_buy.items():
-                vwap_bid += int(price) * amount
                 if int(price) > acceptable_price:
                     print("SELL", str(amount) + "x", price)
                     orders.append(Order(product, price, amount))
-            vwap_bid = vwap_bid / bid_volume
         
-        
-        # Append to database
-        self.df['AMETHYSTS']['TIMESTAMP'].append(state.timestamp)
-        self.df['AMETHYSTS']['MAX_BID'].append(max_bid)
-        self.df['AMETHYSTS']['MIN_BID'].append(min_bid)
-        self.df['AMETHYSTS']['MAX_ASK'].append(max_ask)
-        self.df['AMETHYSTS']['MIN_ASK'].append(min_ask)
-        self.df['AMETHYSTS']['BID_VOLUME'].append(bid_volume)
-        self.df['AMETHYSTS']['ASK_VOLUME'].append(ask_volume)
-        self.df['AMETHYSTS']['VWAP_BID'].append(vwap_bid)
-        self.df['AMETHYSTS']['VWAP_ASK'].append(vwap_ask)
-        self.df['AMETHYSTS']['MID_PRICE'].append((vwap_bid + vwap_ask) / 2)
-        if len(self.df['AMETHYSTS']['MID_PRICE']) > 2:
-            self.df['AMETHYSTS']['MID_PRICE_DIFF'].append(((self.df['AMETHYSTS']['MID_PRICE'][-1] - self.df['AMETHYSTS']['MID_PRICE'][-2]) / self.df['AMETHYSTS']['MID_PRICE'][-2]))
-        else:
-            self.df['AMETHYSTS']['MID_PRICE_DIFF'].append(0)
+        if len(orders_sell) != 0:
+            min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
+            for price, amount in orders_sell.items():
+                if int(price) < acceptable_price:
+                    print("BUY", str(-amount) + "x", price)
+                    orders.append(Order(product, price, -amount))
+                                        
 
+        
+        DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2]
+        # Append to database
+        self.add_to_df(product, DATA)
         return orders
+    
+    
+    def trade_pair_arbitrage(self, state: TradingState, product1: str, product2: str):
+        order_depths = state.order_depths
+        orders = {product1: [], product2: []}
+        CONSTANT , coef, STD = 1555, 0.342475, 25
+        
+        # Orders to be placed on exchange matching engine
+        #orders_sell = state.order_depths[product].sell_orders
+        #orders_buy = state.order_depths[product].buy_orders
+        
+        orders1_sell, orders1_buy = collections.OrderedDict(sorted(order_depths[product1].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product1].buy_orders.items(), reverse=True))
+        orders2_sell, orders2_buy = collections.OrderedDict(sorted(order_depths[product2].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product2].buy_orders.items(), reverse=True))
+        min_bid1, max_bid1, bid_volume1 = min(orders1_buy.keys()), max(orders1_buy.keys()), sum(orders1_buy.values())
+        min_bid2, max_bid2, bid_volume2 = min(orders2_buy.keys()), max(orders2_buy.keys()), sum(orders2_buy.values())
+        min_sell1, max_sell1, sell_volume1 = min(orders1_sell.keys()), max(orders1_sell.keys()), sum(orders1_sell.values())
+        min_sell2, max_sell2, sell_volume2 = min(orders2_sell.keys()), max(orders2_sell.keys()), sum(orders2_sell.values())
+        
+        mid_price1, mid_price2 = (max_bid1 + min_sell1) / 2, (max_bid2 + min_sell2) / 2
+        ideal_price2 = mid_price1 * coef + CONSTANT
+        diff = mid_price2 - ideal_price2
+        
+        if diff > 25: # Arbitrage opportunity, current middle price for product 2 is higher than expected, so we sell product 2 and buy product 1
+            print("Arbitrage opportunity: Buying " + product1 + " and selling " + product2)
+            for price, amount in orders2_buy.items():
+                if int(price) > ideal_price2 + STD:
+                    print("SELL", str(amount) + "x", price)
+                    orders[product2].append(Order(product2, price, amount))
+            
+            for price, amount in orders1_sell.items():
+                if int(price) < mid_price1 - STD:
+                    print("BUY", str(-amount) + "x", price)
+                    orders[product1].append(Order(product1, price, -amount))
+            
+        elif diff < -25: # Arbitrage opportunity, current middle price for product 2 is lower than expected, so we sell product 1 and buy product 2
+            print("Arbitrage opportunity: Buying " + product2 + " and selling " + product1)
+            for price, amount in orders1_buy.items():
+                if int(price) > mid_price1 + STD:
+                    print("SELL", str(amount) + "x", price)
+                    orders[product1].append(Order(product1, price, amount))
+            
+            for price, amount in orders2_sell.items():
+                if int(price) < ideal_price2 - STD:
+                    print("BUY", str(-amount) + "x", price)
+                    orders[product2].append(Order(product2, price, -amount))
+        
+        self.add_to_df(product1, [state.timestamp, max_bid1, min_bid1, max_sell1, min_sell1, bid_volume1, sell_volume1, mid_price1])
+        self.add_to_df(product2, [state.timestamp, max_bid2, min_bid2, max_sell2, min_sell2, bid_volume2, sell_volume2, mid_price2])
+        
+        return orders
+                        
+        # Iterate 
+            
+            
+    
+            
+        
+        
+        
+        
+        
+        
+
+        
+        
+        
+        
+        
+        
+        
+        
+        
+
+        
+    
+    
+    
+    
     
     
