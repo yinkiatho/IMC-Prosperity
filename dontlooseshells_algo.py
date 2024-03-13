@@ -97,7 +97,9 @@ class Trader:
     
     df = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
     empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
-    pos_limits = {'AMETHYSTS': 10000, 'STARFRUIT': 10000}
+    pos_limits = {'AMETHYSTS': 20, 'STARFRUIT': 20}
+    cpos = {'AMETHYSTS': 0, 'STARFRUIT': 0}
+    
     
     # Takes in 'MID_PRICE_DIFF'
     def rsi_7(self, df):
@@ -137,7 +139,6 @@ class Trader:
         
         # Decode into df
         try:
-        # Decode into df
             if state.traderData == "start":
                 self.df = self.empty_state
             else:
@@ -147,40 +148,20 @@ class Trader:
             print("Initial State")
             self.df = self.empty_state
         
-
-	    # Orders to be placed on exchange matching engine
         result = {}
-        #result = self.trade_pair_arbitrage(state, 'AMETHYSTS', 'STARFRUIT')
-        
-        for product in state.order_depths:
-            order_depth: OrderDepth = state.order_depths[product]
-            orders: List[Order] = []
+        for product in ['AMETHYSTS', 'STARFRUIT']:
             if product == 'AMETHYSTS':
                 amethysts_orders = self.trade_stationary(state, 10000, product)
                 result[product] = amethysts_orders
-                continue
-            else:
-                acceptable_price = 1000
-                
-            print("Acceptable price : " + str(acceptable_price))
-            print("Buy Order depth : " + str(len(order_depth.buy_orders)) + ", Sell order depth : " + str(len(order_depth.sell_orders)))
-    
-            if len(order_depth.sell_orders) != 0:
-                best_ask, best_ask_amount = list(order_depth.sell_orders.items())[0]
-                if int(best_ask) < acceptable_price:
-                    print("BUY", str(-best_ask_amount) + "x", best_ask)
-                    orders.append(Order(product, best_ask, -best_ask_amount))
-    
-            if len(order_depth.buy_orders) != 0:
-                best_bid, best_bid_amount = list(order_depth.buy_orders.items())[0]
-                if int(best_bid) > acceptable_price:
-                    print("SELL", str(best_bid_amount) + "x", best_bid)
-                    orders.append(Order(product, best_bid, -best_bid_amount))
-            
-            result[product] = orders
+
+            elif product == 'STARFRUIT':
+                starfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
+                                                                              0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
+                result[product] = starfruit_orders
         
-		    # String value holding Trader state data required. 
-				# It will be delivered as TradingState.traderData on next execution.
+        
+		# String value holding Trader state data required. 
+		# It will be delivered as TradingState.traderData on next execution.
         traderData = jsonpickle.encode(self.df)
         
 		# Sample conversion request. Check more details below. 
@@ -193,10 +174,8 @@ class Trader:
     # Simple function trade around stationary price
     def trade_stationary(self, state: TradingState, acceptable_price: int, product: str):
         orders: list[Order] = []
-        # Orders to be placed on exchange matching engine
-        #orders_sell = state.order_depths[product].sell_orders
-        #orders_buy = state.order_depths[product].buy_orders
         
+        # Orders to be placed on exchange matching engine
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
         
@@ -214,8 +193,6 @@ class Trader:
                     print("BUY", str(-amount) + "x", price)
                     orders.append(Order(product, price, -amount))
                                         
-
-        
         DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2]
         # Append to database
         self.add_to_df(product, DATA)
@@ -225,12 +202,9 @@ class Trader:
     def trade_pair_arbitrage(self, state: TradingState, product1: str, product2: str):
         order_depths = state.order_depths
         orders = {product1: [], product2: []}
-        CONSTANT , coef, STD = 1555, 0.342475, 25
+        CONSTANT , coef, STD = 1555, 0.342475, 25 #STD is the standard deviation of the spread
         
         # Orders to be placed on exchange matching engine
-        #orders_sell = state.order_depths[product].sell_orders
-        #orders_buy = state.order_depths[product].buy_orders
-        
         orders1_sell, orders1_buy = collections.OrderedDict(sorted(order_depths[product1].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product1].buy_orders.items(), reverse=True))
         orders2_sell, orders2_buy = collections.OrderedDict(sorted(order_depths[product2].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product2].buy_orders.items(), reverse=True))
         min_bid1, max_bid1, bid_volume1 = min(orders1_buy.keys()), max(orders1_buy.keys()), sum(orders1_buy.values())
@@ -242,7 +216,7 @@ class Trader:
         ideal_price2 = mid_price1 * coef + CONSTANT
         diff = mid_price2 - ideal_price2
         
-        if diff > 25: # Arbitrage opportunity, current middle price for product 2 is higher than expected, so we sell product 2 and buy product 1
+        if diff > STD: # Arbitrage opportunity, current middle price for product 2 is higher than expected, so we sell product 2 and buy product 1
             print("Arbitrage opportunity: Buying " + product1 + " and selling " + product2)
             for price, amount in orders2_buy.items():
                 if int(price) > ideal_price2 + STD:
@@ -254,7 +228,7 @@ class Trader:
                     print("BUY", str(-amount) + "x", price)
                     orders[product1].append(Order(product1, price, -amount))
             
-        elif diff < -25: # Arbitrage opportunity, current middle price for product 2 is lower than expected, so we sell product 1 and buy product 2
+        elif diff < -STD: # Arbitrage opportunity, current middle price for product 2 is lower than expected, so we sell product 1 and buy product 2
             print("Arbitrage opportunity: Buying " + product2 + " and selling " + product1)
             for price, amount in orders1_buy.items():
                 if int(price) > mid_price1 + STD:
@@ -271,7 +245,49 @@ class Trader:
         
         return orders
                         
-        # Iterate 
+    
+    def trade_regression(self, state: TradingState, product: str, N: int, coefficients: List[float], intercept: float) -> None:
+        
+        orders: list[Order] = []
+        
+        # Orders to be placed on exchange matching engine
+        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
+        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
+        
+        min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
+        min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
+        mid_price = (max_bid + min_ask) / 2
+        # Skip if not enough data
+        if len(self.df[product]['MID_PRICE']) < N:
+            return orders
+        
+        # Calculate regression
+        ideal_mid_price = intercept + sum([self.df[product]['MID_PRICE'][-(i + 1)] * coefficients[i] for i in range(1, N)]) + coefficients[0] * mid_price
+        
+        
+        for price, amount in orders_buy.items():
+            # Current price is greater than predicted next price, so we sell
+            if ((price <= ideal_mid_price - 1) or ((self.position[product] > 0) and (price == ideal_mid_price - 1))) and self.cpos[product] > -self.pos_limits[product]:
+                sell_amount = max(-amount, -self.pos_limits[product] - self.cpos[product])
+                if sell_amount < 0:
+                    print("SELL", str(-amount) + "x", price)
+                    self.cpos[product] += amount
+                    orders.append(Order(product, price, sell_amount))
+        
+        
+        for price, amount in orders_sell.items():
+            # Current lower than predicted next price, so we buy
+            if ((price <= ideal_mid_price + 1) or ((self.position[product] < 0) and (price == ideal_mid_price + 1))) and self.cpos[product] < self.pos_limits[product]:
+                buy_amount = min(amount, self.pos_limits[product] - self.cpos[product])
+                if buy_amount > 0:
+                    print("BUY", str(amount) + "x", price)
+                    orders.append(Order(product, price, buy_amount))
+                    self.cpos[product] += amount
+    
+                                
+        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price])
+        return orders
+        
             
             
     
