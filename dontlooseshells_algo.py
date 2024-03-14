@@ -213,7 +213,7 @@ class Trader:
                     cpos += amount
                         
         
-        cpos = self.cpos[product]
+        self.cpos[product] = cpos
         DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2]
         # Append to database
         self.add_to_df(product, DATA)
