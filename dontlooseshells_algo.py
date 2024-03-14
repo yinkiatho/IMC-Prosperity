@@ -137,7 +137,7 @@ class Trader:
         print("Timestamp: " + str(state.timestamp))
         print("Observations: " + str(state.observations))
         #print("Market Trades: " + str(state.market_trades))
-        #rint("Own Trades: " + str(state.own_trades))
+        print("Positions: " + str(state.position))
         
         # Decode into df
         try:
@@ -193,11 +193,13 @@ class Trader:
         if len(orders_buy) != 0:
             min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
             for price, amount in orders_buy.items():
-                if ((price >= acceptable_price + 1) or ((cpos > 0) and (price == acceptable_price + 1))) and cpos > -self.pos_limits[product]:
+                if (price > acceptable_price) and cpos > -self.pos_limits[product]:
                     sell_amount = max(-amount, -self.pos_limits[product] - cpos)
+                    #sell_amount = -amount
                     if sell_amount < 0:
                         print("SELL", str(-amount) + "x", price)
-                        cpos -= amount
+                        cpos += sell_amount
+                        # cpos -= amount
                         orders.append(Order(product, price, sell_amount))
                         
         cpos = self.cpos[product]
@@ -205,13 +207,14 @@ class Trader:
         if len(orders_sell) != 0:
             min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
             for price, amount in orders_sell.items():
-            # Current lower than predicted next price, so we buy
-                if ((price <= acceptable_price - 1) or ((cpos < 0) and (price == acceptable_price - 1))) and cpos < self.pos_limits[product]:
-                    buy_amount = min(amount, self.pos_limits[product] - cpos)
+            # Current lower than predicted next price, so we buy, amount here is negative
+                if (price < acceptable_price) and cpos < self.pos_limits[product]:
+                    buy_amount = min(-amount, self.pos_limits[product] - cpos)
                     if buy_amount > 0:
-                        print("BUY", str(amount) + "x", price)
+                        print("BUY", str(buy_amount) + "x", price)
                         orders.append(Order(product, price, buy_amount))
-                        cpos += amount
+                        #cpos += amount
+                        cpos += buy_amount
                         
         
         
@@ -307,24 +310,25 @@ class Trader:
         ideal_mid_price = intercept + sum([self.df[product]['MID_PRICE'][-(i + 1)] * coefficients[i] for i in range(1, N)]) + coefficients[0] * mid_price
         
         for price, amount in orders_buy.items():
-            # Current price is greater than predicted next price, so we sell
+            # Current price is greater than predicted next price, so we sell, amount here is positive
             if ((price >= ideal_mid_price + 1) or ((cpos > 0) and (price == ideal_mid_price + 1))) and cpos > -self.pos_limits[product]:
                 sell_amount = max(-amount, -self.pos_limits[product] - cpos)
+            
                 if sell_amount < 0:
-                    print("SELL", str(-amount) + "x", price)
-                    cpos -= amount
+                    print("SELL", str(sell_amount) + "x", price)
+                    cpos += sell_amount
                     orders.append(Order(product, price, sell_amount))
         
         cpos = self.cpos[product]
         
         for price, amount in orders_sell.items():
-            # Current lower than predicted next price, so we buy
+            # Current lower than predicted next price, so we buy, amount here is negative
             if ((price <= ideal_mid_price - 1) or ((cpos < 0) and (price == ideal_mid_price - 1))) and cpos < self.pos_limits[product]:
-                buy_amount = min(amount, self.pos_limits[product] - cpos)
+                buy_amount = min(-amount, self.pos_limits[product] - cpos)
                 if buy_amount > 0:
-                    print("BUY", str(amount) + "x", price)
+                    print("BUY", str(buy_amount) + "x", price)
                     orders.append(Order(product, price, buy_amount))
-                    cpos += amount
+                    cpos += buy_amount
     
                                 
         self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price])
