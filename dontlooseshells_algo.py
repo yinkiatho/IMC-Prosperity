@@ -209,7 +209,7 @@ class Trader:
                 if price <= acceptable_price - 1 and allowed_quantity != 0:
                     buy_amount = min(amount, allowed_quantity)
                     print("BUY", str(amount) + "x", price)
-                    orders.append(Order(product, price, buy_amount))
+                    orders.append(Order(product, price, -buy_amount))
                     cpos += amount
                         
         
