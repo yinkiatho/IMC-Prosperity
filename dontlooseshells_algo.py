@@ -193,33 +193,41 @@ class Trader:
         if len(orders_buy) != 0:
             min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
             for price, amount in orders_buy.items():
-                if ((price >= acceptable_price + 1) or ((cpos > 0) and (price == acceptable_price + 1))) and cpos > -self.pos_limits[product]:
-                    sell_amount = max(-amount, -self.pos_limits[product] - cpos)
-                    if sell_amount < 0:
-                        print("SELL", str(-amount) + "x", price)
-                        cpos -= amount
-                        orders.append(Order(product, price, sell_amount))
+                allowed_quantity = self.calculate_quantity(product, 'sell', cpos, self.pos_limits[product])
+                if (price >= acceptable_price + 1) and allowed_quantity != 0:
+                    sell_amount = min(amount, allowed_quantity)
+                    print("SELL", str(-sell_amount) + "x", price)
+                    cpos -= amount
+                    orders.append(Order(product, price, sell_amount))
                         
-        cpos = self.cpos[product]
         
         if len(orders_sell) != 0:
             min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
             for price, amount in orders_sell.items():
             # Current lower than predicted next price, so we buy
-                if ((price <= acceptable_price - 1) or ((cpos < 0) and (price == acceptable_price - 1))) and cpos < self.pos_limits[product]:
-                    buy_amount = min(amount, self.pos_limits[product] - cpos)
-                    if buy_amount > 0:
-                        print("BUY", str(amount) + "x", price)
-                        orders.append(Order(product, price, buy_amount))
-                        cpos += amount
+                allowed_quantity = self.calculate_quantity(product, 'buy', cpos, self.pos_limits[product])
+                if price <= acceptable_price - 1 and allowed_quantity != 0:
+                    buy_amount = min(amount, allowed_quantity)
+                    print("BUY", str(amount) + "x", price)
+                    orders.append(Order(product, price, buy_amount))
+                    cpos += amount
                         
         
-        
+        cpos = self.cpos[product]
         DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2]
         # Append to database
         self.add_to_df(product, DATA)
         return orders
     
+    def calculate_quantity(self, product: str, action: str, current_position: int, position_limit: int):
+        if action == 'buy':
+            # Available capacity for buying is position_limit + current_position if current_position is negative
+            available_capacity = position_limit + max(-current_position, 0)
+        else:  # sell
+            # Available capacity for selling is position_limit - current_position if current_position is positive
+            available_capacity = position_limit + max(current_position, 0)
+        
+        return available_capacity
     
     def trade_pair_arbitrage(self, state: TradingState, product1: str, product2: str):
         order_depths = state.order_depths
