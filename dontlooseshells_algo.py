@@ -158,15 +158,17 @@ class Trader:
             print("Current Position of " + key + ": " + str(val))
         
         result = {}
-        for product in ['AMETHYSTS', 'STARFRUIT']:
-            if product == 'AMETHYSTS':
-                amethysts_orders = self.trade_stationary(state, 10000, product)
-                result[product] = amethysts_orders
-
-            elif product == 'STARFRUIT':
+        for product in ['STARFRUIT', 'AMETHYSTS']:
+            
+            if product == 'STARFRUIT':
                 starfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
                                                                               0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
                 result[product] = starfruit_orders
+                
+            elif product == 'AMETHYSTS':
+                amethysts_orders = self.trade_stationary(state, 10000, product)
+                result[product] = amethysts_orders
+                #continue
         
         
 		# String value holding Trader state data required. 
@@ -197,7 +199,7 @@ class Trader:
                     sell_amount = max(-amount, -self.pos_limits[product] - cpos)
                     #sell_amount = -amount
                     if sell_amount < 0:
-                        print("SELL", str(-amount) + "x", price)
+                        print("SELL", str(sell_amount) + "x", price)
                         cpos += sell_amount
                         # cpos -= amount
                         orders.append(Order(product, price, sell_amount))
@@ -311,28 +313,91 @@ class Trader:
         
         for price, amount in orders_buy.items():
             # Current price is greater than predicted next price, so we sell, amount here is positive
-            if ((price >= ideal_mid_price + 1) or ((cpos > 0) and (price == ideal_mid_price + 1))) and cpos > -self.pos_limits[product]:
+            if (price > ideal_mid_price and cpos > -self.pos_limits[product]):
                 sell_amount = max(-amount, -self.pos_limits[product] - cpos)
             
                 if sell_amount < 0:
                     print("SELL", str(sell_amount) + "x", price)
                     cpos += sell_amount
                     orders.append(Order(product, price, sell_amount))
+                    
+        #if cpos > -self.pos_limits[product]:
+        #    sell_amount = -self.pos_limits[product] - cpos
+        #    orders.append(Order(product, max_bid, sell_amount))
+        #    cpos += sell_amount
         
         cpos = self.cpos[product]
         
         for price, amount in orders_sell.items():
             # Current lower than predicted next price, so we buy, amount here is negative
-            if ((price <= ideal_mid_price - 1) or ((cpos < 0) and (price == ideal_mid_price - 1))) and cpos < self.pos_limits[product]:
+            if (price < ideal_mid_price and cpos < self.pos_limits[product]):
                 buy_amount = min(-amount, self.pos_limits[product] - cpos)
                 if buy_amount > 0:
                     print("BUY", str(buy_amount) + "x", price)
                     orders.append(Order(product, price, buy_amount))
                     cpos += buy_amount
+                    
+        #if cpos < self.pos_limits[product]:
+        #    buy_amount = self.pos_limits[product] - cpos
+        #    orders.append(Order(product, min_ask, buy_amount))
+        #    cpos += buy_amount
     
                                 
         self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price])
         return orders
+    
+    
+    
+    def grid_trade(self, state: TradingState, product: str):
+        
+        T = 5
+        orders: list[Order] = []
+        
+        if len(self.df[product]['MID_PRICE']) < T:
+            return orders
+
+        # Orders to be placed on exchange matching engine
+        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
+        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
+        
+        min_bid, max_bid, bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values())
+        min_ask, max_ask, ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values())
+        mid_price = (max_bid + min_ask) / 2
+        
+        MA = sum(self.df[product]['MID_PRICE'][-T:]) / T
+        std = statistics.stdev(self.df[product]['MID_PRICE'][-T:])
+        grid = [[5, -1.5], [3, -1], [2, -0.5], [-2, 0.5], [-3, 1], [-5, 1.5]]
+        
+        cpos = self.cpos[product]
+        # Strategy is to open short/long position when per price difference from MA and current middle price
+        # Each increment is 0.25 standard deviation
+        
+        extra = self.pos_limits - math.abs(cpos)
+        order_size = extra / 20
+        
+        # Set up grid
+        for interval in grid:
+            unit_size, price = interval[0] * order_size, MA + interval[1] * std
+            if unit_size > 0:
+                print("BUY", str(unit_size) + "x", price)
+                orders.append(Order(product, price, unit_size))
+            else:
+                print("SELL", str(unit_size) + "x", price)
+                orders.append(Order(product, price, unit_size))
+        
+        
+                
+        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price])
+        return orders
+        
+        
+        
+        
+        
+        #
+        
+    
+    
         
             
             
