@@ -28,7 +28,9 @@ ALL_SYMBOLS = [
     'BAGUETTE',
     'DIP',
     'UKULELE',
-    'PICNIC_BASKET'
+    'PICNIC_BASKET',
+    'AMETHYSTS',
+    'STARFRUIT'
 ]
 POSITIONABLE_SYMBOLS = [
     'PEARLS',
@@ -40,9 +42,11 @@ POSITIONABLE_SYMBOLS = [
     'BAGUETTE',
     'DIP',
     'UKULELE',
-    'PICNIC_BASKET'
+    'PICNIC_BASKET',
+    'AMETHYSTS',
+    'STARFRUIT'
 ]
-first_round = ['PEARLS', 'BANANAS']
+first_round = ['AMETHYSTS', 'STARFRUIT']
 snd_round = first_round + ['COCONUTS',  'PINA_COLADAS']
 third_round = snd_round + ['DIVING_GEAR', 'DOLPHIN_SIGHTINGS', 'BERRIES']
 fourth_round = third_round + ['BAGUETTE', 'DIP', 'UKULELE', 'PICNIC_BASKET']
@@ -56,7 +60,7 @@ SYMBOLS_BY_ROUND = {
     5: fifth_round,
 }
 
-first_round_pst = ['PEARLS', 'BANANAS']
+first_round_pst =['AMETHYSTS', 'STARFRUIT']
 snd_round_pst = first_round_pst + ['COCONUTS',  'PINA_COLADAS']
 third_round_pst = snd_round_pst + ['DIVING_GEAR', 'BERRIES']
 fourth_round_pst = third_round_pst + ['BAGUETTE', 'DIP', 'UKULELE', 'PICNIC_BASKET']
@@ -142,6 +146,8 @@ current_limits = {
     'DIP': 300,
     'UKULELE': 70,
     'PICNIC_BASKET': 70,
+    'AMETHYSTS': 20,
+    'STARFRUIT': 20,
 }
 
 def calc_mid(states: dict[int, TradingState], round: int, time: int, max_time: int) -> dict[str, float]:
