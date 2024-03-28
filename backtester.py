@@ -531,9 +531,12 @@ def create_log_file(round: int, day: int, states: dict[int, TradingState], profi
         print(f"\nSimulation on round {round} day {day} for time {max_time} complete")
 
 
-# Adjust accordingly the round and day to your needs
+# Adjust accordingly the round and day to your needs1
+
 if __name__ == "__main__":
     trader = Trader()
+    #simulate_alternative(1, -2, trader, 1*100000, False, True, False)
+    
     max_time = int(input("Max timestamp (1-9)->(1-9)(00_000) or exact number): ") or 999000)
     if max_time < 10:
         max_time *= 100000
@@ -550,3 +553,6 @@ if __name__ == "__main__":
     print(f"Running simulation on round {round} day {day} for time {max_time}")
     print("Remember to change the trader import")
     simulate_alternative(round, day, trader, max_time, names, halfway, False)
+    print("Simulation complete")
+    #print(trader.df['STARFRUIT'])
+    
