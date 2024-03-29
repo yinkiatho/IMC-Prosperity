@@ -211,6 +211,8 @@ def simulate_alternative(
     if hasattr(trader, 'after_last_round'):
         if callable(trader.after_last_round): #type: ignore
             trader.after_last_round(profits_by_symbol, balance_by_symbol) #type: ignore
+            
+    return profits_by_symbol
 
 
 def trades_position_pnl_run(
@@ -552,7 +554,26 @@ if __name__ == "__main__":
         halfway = True
     print(f"Running simulation on round {round} day {day} for time {max_time}")
     print("Remember to change the trader import")
-    simulate_alternative(round, day, trader, max_time, names, halfway, False)
+    #profits = simulate_alternative(round, day, trader, max_time, names, halfway, False)
     print("Simulation complete")
+    #print(profits)
+    
+    # Grid Search MACD Parametrising Test
+    results = []
+    for i in range(1, 15, 3):
+        for j in range(1, 30, 3):
+            for x in range(1, 10, 2):
+                new_trader = Trader([i, j, x])
+                profits = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
+                
+                # Tally Results
+                amethysts, starfruit = profits[max_time]['AMETHYSTS'], profits[max_time]['STARFRUIT']
+                results.append((i, j, x, amethysts, starfruit))
+                
+    # Sort Results
+    results.sort(key=lambda x: x[3] + x[4], reverse=True)
+    print(results[:10])
+                
+                
     #print(trader.df['STARFRUIT'])
     

@@ -93,8 +93,8 @@ inner_dict = {
     'BEST_ASK': [],
     'BEST_BID': [],
     'MACD': [],
-    'EMA12': [],
-    'EMA26': [],
+    'EMA_A': [],
+    'EMA_B': [],
     'SIGNAL': []
 }
 
@@ -105,6 +105,10 @@ class Trader:
     empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
     pos_limits = {'AMETHYSTS': 20, 'STARFRUIT': 20}
     cpos = {'AMETHYSTS': 0, 'STARFRUIT': 0}
+    macd_window = []
+    
+    def __init__(self, macd_window=[1, 13, 9]) -> None:
+        self.macd_window = macd_window
     
     
     # Takes in 'MID_PRICE_DIFF'
@@ -119,29 +123,29 @@ class Trader:
         rs = gain / loss
         return 100 - (100 / (1 + rs))
     
-    def calculate_ema(self, product):
+    def calculate_ema(self, product, windows=[1, 13, 9]):
 
-        for window in [12, 26]:
+        for window in windows[:2]:
             K = 2 / (window + 1)
         
             if len(self.df[product]['MID_PRICE']) < window:
                     return
             elif len(self.df[product]['MID_PRICE']) == window:
-                if window == 12:
-                    self.df[product]['EMA12'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
-                elif window == 26:
-                    self.df[product]['EMA26'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
+                if window == windows[0]:
+                    self.df[product]['EMA_A'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
+                elif window == windows[1]:
+                    self.df[product]['EMA_B'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
             else:
-                if window == 12:
-                    self.df[product]['EMA12'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA12'][-1]))
-                elif window == 26:
-                    self.df[product]['EMA26'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA26'][-1]))
+                if window == windows[0]:
+                    self.df[product]['EMA_A'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_A'][-1]))
+                elif window == windows[0]:
+                    self.df[product]['EMA_B'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_B'][-1]))
                     
-        if self.df[product]['EMA12'] and self.df[product]['EMA26']:
-            self.df[product]['MACD'].append(self.df[product]['EMA12'][-1] - self.df[product]['EMA26'][-1])
+        if self.df[product]['EMA_A'] and self.df[product]['EMA_B']:
+            self.df[product]['MACD'].append(self.df[product]['EMA_A'][-1] - self.df[product]['EMA_B'][-1])
             
             
-        window = 9
+        window = windows[2]
         K = 2 / (window + 1)
         if len(self.df[product]['MACD']) < window:
             return
@@ -209,7 +213,7 @@ class Trader:
             self.df[product]['MID_PRICE_DIFF'].append(0)
             
         #if len(self.df[product]['MID_PRICE']) >= 26:
-        self.calculate_ema(product)
+        self.calculate_ema(product, self.macd_window)
             
     def run(self, state: TradingState):
 
@@ -234,8 +238,8 @@ class Trader:
         for key, val in state.position.items():
             self.cpos[key] = val
             
-        for key, val in state.position.items():
-            print("Current Position of " + key + ": " + str(val))
+        #for key, val in state.position.items():
+            #print("Current Position of " + key + ": " + str(val))
         
         result = {}
         for product in state.order_depths.keys():
@@ -246,10 +250,10 @@ class Trader:
                 #result[product] = []
                 
             elif product == 'STARFRUIT':
-                starfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
-                                                                          0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
+                #tarfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
+                #                                                          0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
                 
-                #starfruit_orders = self.trade_momentum(state, product)
+                starfruit_orders = self.trade_momentum(state, product)
                 result[product] = starfruit_orders
 		# String value holding Trader state data required. 
 		# It will be delivered as TradingState.traderData on next execution.
@@ -280,7 +284,6 @@ class Trader:
                     if sell_amount < 0:
                         print("SELL", str(sell_amount) + "x", price)
                         cpos += sell_amount
-                        # cpos -= amount
                         orders.append(Order(product, price, sell_amount))
                         
         cpos = self.cpos[product]
@@ -293,7 +296,6 @@ class Trader:
                     if buy_amount > 0:
                         print("BUY", str(buy_amount) + "x", price)
                         orders.append(Order(product, price, buy_amount))
-                        #cpos += amount
                         cpos += buy_amount
         
         DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2, best_ask_price, best_bid_price]
@@ -698,10 +700,6 @@ class Trader:
         
         cpos = self.cpos[product]
         
-        #if len(self.df[product]['MACD']) < 9:
-        #    self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
-        #    return orders
-        
         # Generate Signals calculate difference between 26EMA and 12EMA, signal line 9EMA
         self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
         
@@ -710,10 +708,7 @@ class Trader:
         
         MACD = self.df[product]['MACD'][-1]
         SIGNAL = self.df[product]['SIGNAL'][-1]
-        
-        #if len(self.df[product]['SIGNAL']) in [1, 2]:
-        #    print(self.df[product])
-        
+
         print(f"MACD: {MACD} SIGNAL: {SIGNAL} at {state.timestamp}")
         
         ORDER_LIMIT = 5
