@@ -107,7 +107,7 @@ class Trader:
     cpos = {'AMETHYSTS': 0, 'STARFRUIT': 0}
     macd_window = []
     
-    def __init__(self, macd_window=[1, 13, 9]) -> None:
+    def __init__(self, macd_window=[1, 10, 9]) -> None:
         self.macd_window = macd_window
     
     
@@ -123,7 +123,7 @@ class Trader:
         rs = gain / loss
         return 100 - (100 / (1 + rs))
     
-    def calculate_ema(self, product, windows=[1, 13, 9]):
+    def calculate_ema(self, product, windows=[1, 10, 9]):
 
         for window in windows[:2]:
             K = 2 / (window + 1)
@@ -138,7 +138,7 @@ class Trader:
             else:
                 if window == windows[0]:
                     self.df[product]['EMA_A'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_A'][-1]))
-                elif window == windows[0]:
+                elif window == windows[1]:
                     self.df[product]['EMA_B'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_B'][-1]))
                     
         if self.df[product]['EMA_A'] and self.df[product]['EMA_B']:
@@ -167,13 +167,13 @@ class Trader:
             
             if min_bid == 0:
                 min_bid = price
-            elif price < min_bid:
-                min_bid = price
+            else:
+                min_bid = min(price, min_bid)
             
             max_bid = max(price, max_bid)
             bid_volume += amount
             
-            if amount > best_bid_volume:
+            if amount > best_bid_volume or amount == best_bid_volume and price < best_bid_price:
                 best_bid_volume = amount
                 best_bid_price = price
         
@@ -182,13 +182,13 @@ class Trader:
                 
             if min_ask == 0:
                 min_ask = price
-            elif price < min_ask:
-                min_ask = price
+            else:
+                min_ask = min(price, min_ask)
                 
             max_ask = max(price, max_ask)
             ask_volume += amount
                 
-            if amount > best_ask_volume:
+            if amount > best_ask_volume or amount == best_ask_volume and price > best_ask_price:
                 best_ask_volume = amount
                 best_ask_price = price
                 
@@ -250,9 +250,8 @@ class Trader:
                 #result[product] = []
                 
             elif product == 'STARFRUIT':
-                #tarfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
-                #                                                          0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
-                
+                #starfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
+                #                                                      0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
                 starfruit_orders = self.trade_momentum(state, product)
                 result[product] = starfruit_orders
 		# String value holding Trader state data required. 
