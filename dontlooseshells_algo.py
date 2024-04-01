@@ -82,16 +82,15 @@ class Logger:
 
 inner_dict = {
     'TIMESTAMP': [],
-    'MAX_BID': [],
-    'MIN_BID': [],
-    'MAX_ASK': [],
-    'MIN_ASK': [],
-    'BID_VOLUME': [],
-    'ASK_VOLUME': [],
+    #'MAX_BID': [],
+    #'MIN_BID': [],
+    #'MAX_ASK': [],
+    #'MIN_ASK': [],
+    #'BID_VOLUME': [],
+    #'ASK_VOLUME': [],
     'MID_PRICE': [],
-    'MID_PRICE_DIFF': [],
-    'BEST_ASK': [],
-    'BEST_BID': [],
+    #'BEST_ASK': [],
+    #'BEST_BID': [],
     'MACD': [],
     'EMA_A': [],
     'EMA_B': [],
@@ -105,10 +104,7 @@ class Trader:
     empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
     pos_limits = {'AMETHYSTS': 20, 'STARFRUIT': 20}
     cpos = {'AMETHYSTS': 0, 'STARFRUIT': 0}
-    macd_window = []
-    
-    def __init__(self, macd_window=[1, 10, 9]) -> None:
-        self.macd_window = macd_window
+    macd_window = [1, 10, 9]
     
     
     # Takes in 'MID_PRICE_DIFF'
@@ -127,32 +123,34 @@ class Trader:
 
         for window in windows[:2]:
             K = 2 / (window + 1)
-        
+            
             if len(self.df[product]['MID_PRICE']) < window:
-                    return
+                return
             elif len(self.df[product]['MID_PRICE']) == window:
                 if window == windows[0]:
                     self.df[product]['EMA_A'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
                 elif window == windows[1]:
                     self.df[product]['EMA_B'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
+                    
+            # len > window
             else:
                 if window == windows[0]:
                     self.df[product]['EMA_A'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_A'][-1]))
                 elif window == windows[1]:
                     self.df[product]['EMA_B'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_B'][-1]))
                     
-        if self.df[product]['EMA_A'] and self.df[product]['EMA_B']:
+        if len(self.df[product]['EMA_A']) > 0 and len(self.df[product]['EMA_B']) > 0:
             self.df[product]['MACD'].append(self.df[product]['EMA_A'][-1] - self.df[product]['EMA_B'][-1])
             
-            
         window = windows[2]
+        
         K = 2 / (window + 1)
         if len(self.df[product]['MACD']) < window:
             return
         elif len(self.df[product]['MACD']) == window:
             self.df[product]['SIGNAL'].append(statistics.mean(self.df[product]['MACD'][:window]))
         else:
-            self.df[product]['SIGNAL'].append(self.df[product]['MACD'][-1] * K + ((1-K) * self.df[product]['SIGNAL'][-1]) )
+            self.df[product]['SIGNAL'].append(self.df[product]['MACD'][-1] * K + ((1-K) * self.df[product]['SIGNAL'][-1]))
                 
         #return ema
     
@@ -198,19 +196,15 @@ class Trader:
     def add_to_df(self, product, data):
         timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price = data
         self.df[product]['TIMESTAMP'].append(timestamp)
-        self.df[product]['MAX_BID'].append(max_bid)
-        self.df[product]['MIN_BID'].append(min_bid)
-        self.df[product]['MAX_ASK'].append(max_ask)
-        self.df[product]['MIN_ASK'].append(min_ask)
-        self.df[product]['BID_VOLUME'].append(bid_volume)
-        self.df[product]['ASK_VOLUME'].append(ask_volume)
+        #self.df[product]['MAX_BID'].append(max_bid)
+        #self.df[product]['MIN_BID'].append(min_bid)
+        #self.df[product]['MAX_ASK'].append(max_ask)
+        #self.df[product]['MIN_ASK'].append(min_ask)
+        #self.df[product]['BID_VOLUME'].append(bid_volume)
+        #self.df[product]['ASK_VOLUME'].append(ask_volume)
         self.df[product]['MID_PRICE'].append(mid_price)
-        self.df[product]['BEST_ASK'].append(best_ask_price)
-        self.df[product]['BEST_BID'].append(best_bid_price)
-        if len(self.df[product]['MID_PRICE']) > 2:
-            self.df[product]['MID_PRICE_DIFF'].append(((self.df[product]['MID_PRICE'][-1] - self.df[product]['MID_PRICE'][-2]) / self.df[product]['MID_PRICE'][-2]))
-        else:
-            self.df[product]['MID_PRICE_DIFF'].append(0)
+        #self.df[product]['BEST_ASK'].append(best_ask_price)
+        #self.df[product]['BEST_BID'].append(best_bid_price)
             
         #if len(self.df[product]['MID_PRICE']) >= 26:
         self.calculate_ema(product, self.macd_window)
@@ -251,7 +245,7 @@ class Trader:
                 
             elif product == 'STARFRUIT':
                 #starfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
-                #                                                      0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
+                #                                                              0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
                 starfruit_orders = self.trade_momentum(state, product)
                 result[product] = starfruit_orders
 		# String value holding Trader state data required. 
@@ -272,7 +266,12 @@ class Trader:
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
         min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
-
+        #min_bid, max_bid, bid_volume, best_bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values()), max(orders_buy.values())
+        #min_ask, max_ask, ask_volume, best_ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values()), max(orders_sell.values())
+        
+        #best_bid_price = [price for price, amount in orders_buy.items() if amount == best_bid_volume][0]
+        #best_ask_price = [price for price, amount in orders_sell.items() if amount == best_ask_volume][0]
+        
         cpos = self.cpos[product] # eg. cpos of 5 with pos limit of 20 means we can buy 15 more, and sell 25 more of product
         
         if len(orders_buy) != 0:
@@ -375,7 +374,13 @@ class Trader:
         # Orders to be placed on exchange matching engine
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
+        #min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
+        min_bid, max_bid, bid_volume, best_bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values()), max(orders_buy.values())
+        min_ask, max_ask, ask_volume, best_ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values()), max(orders_sell.values())
+        
+        best_bid_price = [price for price, amount in orders_buy.items() if amount == best_bid_volume][0]
+        best_ask_price = [price for price, amount in orders_sell.items() if amount == best_ask_volume][0]
+        
         
         mid_price = (max_bid + max_ask) / 2
         # Skip if not enough data
@@ -694,6 +699,12 @@ class Trader:
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
         
+        #min_bid, max_bid, bid_volume, best_bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values()), max(orders_buy.values())
+        #min_ask, max_ask, ask_volume, best_ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values()), max(orders_sell.values())
+        
+        #best_bid_price = [price for price, amount in orders_buy.items() if amount == best_bid_volume][0]
+        #best_ask_price = [price for price, amount in orders_sell.items() if amount == best_ask_volume][0]
+        
         min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
         mid_price = (max_bid + min_ask) / 2
         
@@ -708,9 +719,9 @@ class Trader:
         MACD = self.df[product]['MACD'][-1]
         SIGNAL = self.df[product]['SIGNAL'][-1]
 
-        print(f"MACD: {MACD} SIGNAL: {SIGNAL} at {state.timestamp}")
-        
-        ORDER_LIMIT = 5
+        #print(f"MACD: {MACD} SIGNAL: {SIGNAL} at {state.timestamp}")
+        #print(state.own_trades)
+                
         # Buy Signal, MACD > SIGNAL
         if MACD > SIGNAL:
             curr_bought = 0
@@ -737,11 +748,9 @@ class Trader:
                         cpos += sell_amount
                         curr_sold += sell_amount # sell_amount is negative
                         
-        else:
-            return orders
-                                
         return orders
-                        
+                                                        
+                                                        
             
         
         
