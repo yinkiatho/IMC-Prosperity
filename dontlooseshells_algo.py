@@ -50,7 +50,7 @@ class Logger:
             "od": order_depths,
             "ot": self.compress_trades(state.own_trades),
             "mt": self.compress_trades(state.market_trades),
-            "p": state.position,
+            "p": state.pos,
             "o": state.observations,
         }
 
@@ -232,7 +232,7 @@ class Trader:
         for key, val in state.position.items():
             self.cpos[key] = val
             
-        #for key, val in state.position.items():
+        #for key, val in state.pos.items():
             #print("Current Position of " + key + ": " + str(val))
         
         result = {}
@@ -244,9 +244,12 @@ class Trader:
                 #result[product] = []
                 
             elif product == 'STARFRUIT':
+                starfruit_orders = self.trade_regression(state, product, 5, [0.28553486, 0.19636587, 0.20858156, 0.16300375, 0.143612], 7.186)
+                
+                # Current Best regression
                 #starfruit_orders = self.trade_regression(state, product, 10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,
                 #                                                              0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140)
-                starfruit_orders = self.trade_momentum(state, product)
+                #starfruit_orders = self.trade_momentum(state, product)
                 result[product] = starfruit_orders
 		# String value holding Trader state data required. 
 		# It will be delivered as TradingState.traderData on next execution.
@@ -271,6 +274,14 @@ class Trader:
         
         #best_bid_price = [price for price, amount in orders_buy.items() if amount == best_bid_volume][0]
         #best_ask_price = [price for price, amount in orders_sell.items() if amount == best_ask_volume][0]
+
+        
+        mid_price = (best_bid_price + best_ask_price) / 2
+        undercut_buy = best_bid_price + 1
+        undercut_sell = best_ask_price - 1
+
+        bid_pr = min(undercut_buy, acceptable_price-1) # we will shift this by 1 to beat this price
+        sell_pr = max(undercut_sell, acceptable_price+1)
         
         cpos = self.cpos[product] # eg. cpos of 5 with pos limit of 20 means we can buy 15 more, and sell 25 more of product
         
@@ -284,6 +295,23 @@ class Trader:
                         cpos += sell_amount
                         orders.append(Order(product, price, sell_amount))
                         
+                        
+        if (cpos > -self.pos_limits['AMETHYSTS']) and (self.cpos[product] > 0):
+            num = max(-40, -self.pos_limits['AMETHYSTS']-cpos)
+            orders.append(Order(product, max(undercut_sell-1, acceptable_price+1), num))
+            cpos += num
+
+        if (cpos > -self.pos_limits['AMETHYSTS']) and (self.cpos[product] < -15):
+            num = max(-40, -self.pos_limits['AMETHYSTS']-cpos)
+            orders.append(Order(product, max(undercut_sell+1, acceptable_price+1), num))
+            cpos += num
+
+        if cpos > -self.pos_limits['AMETHYSTS']:
+            num = max(-40, -self.pos_limits['AMETHYSTS']-cpos)
+            orders.append(Order(product, sell_pr, num))
+            cpos += num
+                                 
+                        
         cpos = self.cpos[product]
         
         if len(orders_sell) != 0:
@@ -295,9 +323,26 @@ class Trader:
                         print("BUY", str(buy_amount) + "x", price)
                         orders.append(Order(product, price, buy_amount))
                         cpos += buy_amount
+                        
+        
+
+        if (cpos < self.pos_limits['AMETHYSTS']) and (self.cpos[product] < 0):
+            num = min(40, self.pos_limits['AMETHYSTS'] - cpos)
+            orders.append(Order(product, min(undercut_buy + 1, acceptable_price-1), num))
+            cpos += num
+
+        if (cpos < self.pos_limits['AMETHYSTS']) and (self.cpos[product] > 15):
+            num = min(40, self.pos_limits['AMETHYSTS'] - cpos)
+            orders.append(Order(product, min(undercut_buy - 1, acceptable_price-1), num))
+            cpos += num
+
+        if cpos < self.pos_limits['AMETHYSTS']:
+            num = min(40, self.pos_limits['AMETHYSTS'] - cpos)
+            orders.append(Order(product, bid_pr, num))
+            cpos += num
         
         DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2, best_ask_price, best_bid_price]
-        # Append to database
+        # Append to databasez
         self.add_to_df(product, DATA)
         return orders
     
