@@ -153,6 +153,7 @@ current_limits = {
 def calc_mid(states: dict[int, TradingState], round: int, time: int, max_time: int) -> dict[str, float]:
     medians_by_symbol = {}
     non_empty_time = time
+    all_mids = {}
     for psymbol in SYMBOLS_BY_ROUND_POSITIONABLE[round]:
         hitted_zero = False
         while len(states[non_empty_time].order_depths[psymbol].sell_orders.keys()) == 0 or len(states[non_empty_time].order_depths[psymbol].buy_orders.keys()) == 0:
@@ -166,7 +167,25 @@ def calc_mid(states: dict[int, TradingState], round: int, time: int, max_time: i
         max_bid = max(states[non_empty_time].order_depths[psymbol].buy_orders.keys())
         median_price = statistics.median([min_ask, max_bid])
         medians_by_symbol[psymbol] = median_price
+        
+    
     return medians_by_symbol
+
+
+def calculate_mid_prices(states: dict[int, TradingState], max_time: int):
+    all_mids = {}
+    for symbol in SYMBOLS_BY_ROUND_POSITIONABLE[round]:
+        all_mids[symbol] = []
+        for time, state in states.items():
+            min_ask = min(state.order_depths[symbol].sell_orders.keys())
+            max_bid = max(state.order_depths[symbol].buy_orders.keys())
+            median_price = statistics.median([min_ask, max_bid])
+            all_mids[symbol].append(median_price)
+            
+    return all_mids
+            
+            
+    
 
 
 # Setting a high time_limit can be harder to visualize
@@ -192,6 +211,8 @@ def simulate_alternative(
     states = process_trades(df_trades, states, time_limit, names)
     ref_symbols = list(states[0].position.keys())
     max_time = max(list(states.keys()))
+    
+    all_mids = calculate_mid_prices(states, max_time)
 
     # handling these four is rather tricky 
     profits_by_symbol: dict[int, dict[str, float]] = { 0: dict(zip(ref_symbols, [0.0]*len(ref_symbols))) }
@@ -212,7 +233,7 @@ def simulate_alternative(
         if callable(trader.after_last_round): #type: ignore
             trader.after_last_round(profits_by_symbol, balance_by_symbol) #type: ignore
             
-    return profits_by_symbol
+    return profits_by_symbol, all_mids
 
 
 def trades_position_pnl_run(
@@ -225,6 +246,7 @@ def trades_position_pnl_run(
         ):
         starting = True
         traderState = None
+        #mids, all_mids = calc_mid(states, round, time, max_time)
         for time, state in states.items():
             position = copy.deepcopy(state.position)
             if not starting and traderState != None:
@@ -237,9 +259,8 @@ def trades_position_pnl_run(
                 
             if not starting:
                 traderState = traderData
-                
-            trades = clear_order_book(orders, state.order_depths, time, halfway)
             mids = calc_mid(states, round, time, max_time)
+            trades = clear_order_book(orders, state.order_depths, time, halfway)
             if profits_by_symbol.get(time + TIME_DELTA) == None and time != max_time:
                 profits_by_symbol[time + TIME_DELTA] = copy.deepcopy(profits_by_symbol[time])
             if credit_by_symbol.get(time + TIME_DELTA) == None and time != max_time:
@@ -536,7 +557,7 @@ def create_log_file(round: int, day: int, states: dict[int, TradingState], profi
 # Adjust accordingly the round and day to your needs1
 
 if __name__ == "__main__":
-    trader = Trader()
+    trader = Trader(use_macd=True,linear_regression=[5, [0.33791332214313974, 0.3337481764570071, 0.20117035619236828, 0.08200505355958354, 0.043948316609723814], 6.115990653031986])
     #simulate_alternative(1, -2, trader, 1*100000, False, True, False)
     
     max_time = int(input("Max timestamp (1-9)->(1-9)(00_000) or exact number): ") or 999000)
@@ -554,26 +575,81 @@ if __name__ == "__main__":
         halfway = True
     print(f"Running simulation on round {round} day {day} for time {max_time}")
     print("Remember to change the trader import")
-    profits = simulate_alternative(round, day, trader, max_time, names, halfway, False)
+    profits, mids = simulate_alternative(round, day, trader, max_time, names, halfway, False)
     print("Simulation complete")
     #print(profits)
+    mids = pd.DataFrame(mids)
+    for symbol in SYMBOLS_BY_ROUND_POSITIONABLE[round]:
+        symbol_df = mids[symbol]
+        symbol_df.to_csv(f'{symbol}_round_{round}_day_{day}.csv', sep=',')
+        
+    # # Optimising Spread Stationary
+    # spread_results = []
+    # for extra in range(20, 100, 10):
+    #     for spread in range(1, 10):
+    #         new_trader = Trader(use_macd=False, SPREAD=spread, extra=extra)
+    #         profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
+
+    #         # Tally Results
+    #         final_key = max(list(profits.keys()))
+    #         amethysts, starfruit = profits[final_key]['AMETHYSTS'], profits[final_key]['STARFRUIT']
+    #         spread_results.append((spread, extra, amethysts, starfruit))
+        
+    # spread_results.sort(key=lambda x: x[2], reverse=True)
     
-    # Grid Search MACD Parametrising Test
-    #results = []
-    #for i in range(1, 2):
-    #    for j in range(1, 16, 3):
-    #        for x in range(1, 10, 2):
-    #            new_trader = Trader([i, j, x])
-    #            profits = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
-    #            
-    #            # Tally Results
-    #            amethysts, starfruit = profits[max_time]['AMETHYSTS'], profits[max_time]['STARFRUIT']
-    #            results.append((i, j, x, amethysts, starfruit))
+    
+    
+    # #Grid Search MACD Parametrising Test
+    # macd_results = []
+    # macd_limits = [1, 2, 4, 8, 12, 16, 10000]
+    # for macd_limit in macd_limits:
+    #     for i in range(1, 2):
+    #         for j in range(1, 16, 3):
+    #             for x in range(1, 10, 2):
+    #                 new_trader = Trader(use_macd=True, macd_window=[i, j, x], MACD_MAX_ORDER=macd_limit)  
+    #                 profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
                 
-    # Sort Results
-    #results.sort(key=lambda x: x[3] + x[4], reverse=True)
-    #print(results[:10])
+    #                 # Tally Results
+    #                 final_key = max(list(profits.keys()))
+    #                 amethysts, starfruit = profits[final_key]['AMETHYSTS'], profits[final_key]['STARFRUIT']
+    #                 macd_results.append((i, j, x, amethysts, starfruit))
                 
                 
-    #print(trader.df['STARFRUIT'])
+    # # # Sort Results
+    # macd_results.sort(key=lambda x: x[3] + x[4], reverse=True)
+   
+    
+    # # # Optimising Linear Regression and its Spread
+    # linear_results = []
+    # linear_models = [[5, [0.2855348610350703, 0.19636586585157223, 0.2085815583912594, 0.16300375129950456, 0.1436120009177377], 14.4122],
+    #                  [10, [0.26246044, 0.16805252, 0.17344203, 0.12245118, 0.08862426,0.03932866, 0.03248221, 0.00336833, 0.04446871, 0.06437383], 2.140],
+    #                  [3, [0.3818923570124285, 0.28960313172135327, 0.32372880900558026], 23.76841357748617], 
+    #                  [4, [0.3181536448694423, 0.22833122927507202, 0.24110968799409235, 0.20884187390574507], 17.71654952091012],
+    #                  [6, [0.26685745405622746, 0.18178242095439978, 0.19177753481518553, 0.1499340120694009, 0.12097123312416067, 0.08600558723351978], 13.259598999076843],
+    #                  [8, [0.25818095092661225, 0.16894630704102934, 0.1756231169652344, 0.13232357814607715, 0.1057365823614524, 0.06408205561943, 0.05818121558640171, 0.03449863602296444], 12.034484003943362],
+    #                  [7, [0.2602249129894475, 0.17232894260632178, 0.181153893998494, 0.13814343199191903, 0.11173706414605679, 0.06819677802586883, 0.0656780359696685], 12.582366271035426]]
+    
+    # for linear_model in linear_models:
+    #     for spread in [1, 2, 3]:
+    #         new_trader = Trader(use_macd=False, linear_regression=linear_model, SPREAD=spread)
+    #         profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
+                
+    #         # Tally Results
+    #         final_key = max(list(profits.keys()))
+    #         amethysts, starfruit = profits[final_key]['AMETHYSTS'], profits[final_key]['STARFRUIT']
+    #         linear_results.append((linear_model[0], spread, amethysts, starfruit))
+            
+    # linear_results.sort(key=lambda x: x[2] + x[3], reverse=True)
+    
+    # print(f"MACD Results Parameter Optimization")
+    # print(macd_results[:min(20, len(macd_results))])
+    
+    # print(f"Linear Regression Results Parameter Optimization")
+    # print(linear_results[:min(20, len(linear_results))])
+    
+    
+    #print(f"Spread Results and Extra Parameter Optimization")
+    #print(spread_results[:10])
+    
+    
     
