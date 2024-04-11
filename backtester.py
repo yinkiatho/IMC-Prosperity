@@ -392,7 +392,7 @@ def monkey_positions(monkey_names: list[str], states: dict[int, TradingState], r
                         balance_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol] = 0
                     else:
                         balance_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol] = credit_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol] + unrealized_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol]
-                    profit_balance[time + FLEX_TIME_DELTA][monkey][psymbol] = profits_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol] + balance_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol]
+            profit_balance[time + FLEX_TIME_DELTA][monkey][psymbol] = profits_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol] + balance_by_symbol[time + FLEX_TIME_DELTA][monkey][psymbol]
             prev_monkey_positions[monkey] = copy.deepcopy(monkey_positions[monkey])
             monkey_positions[monkey] = position
             if time == max_time:
@@ -556,8 +556,8 @@ def create_log_file(round: int, day: int, states: dict[int, TradingState], profi
 # Adjust accordingly the round and day to your needs1
 
 if __name__ == "__main__":
-    trader = Trader(SPREAD=3,use_macd=False, REGRESSION_SPREAD=1, extra=20,
-                    linear_regression=[5, [0.33791332214313974, 0.3337481764570071, 0.20117035619236828, 0.08200505355958354, 0.043948316609723814], 6.1159])
+    trader = Trader(SPREAD=3,use_macd=False, REGRESSION_SPREAD=1, extra=20, regression_extra=20,
+                    linear_regression=[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236])
     #simulate_alternative(1, -2, trader, 1*100000, False, True, False)
     
     max_time = int(input("Max timestamp (1-9)->(1-9)(00_000) or exact number): ") or 999000)
@@ -645,9 +645,9 @@ if __name__ == "__main__":
     # # macd_results.sort(key=lambda x: x[3] + x[4], reverse=True)
    
     
-    # Optimising Linear Regression and its Spread
+    #Optimising Linear Regression and its Spread
     # linear_results = []
-    # linear_models = [[5, [0.33791332214313974, 0.3337481764570071, 0.20117035619236828, 0.08200505355958354, 0.043948316609723814], 6.115990653031986],
+    # linear_models = [[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236],
     #                  [6, [0.3318083033107856, 0.3323260816901865, 0.20071972419552198, 0.08160998264750106, 0.04375847244687196, 0.008596169468114855], 5.947416965931552],
     #                  [7, [0.33181448274499276, 0.3322579441835937, 0.2006959852503323, 0.0816130190392255, 0.04381063553086938, 0.008597088354513456, 3.0322461129869954e-05], 5.9437049141924945], 
     #                  [8, [0.33179922480627727, 0.3322624284422393, 0.20068773909075435, 0.08161743456399213, 0.043815663327359734, 0.008606645120145811, 3.01113087998304e-05], 5.944875585296359],
@@ -655,31 +655,32 @@ if __name__ == "__main__":
     #                  [4, [0.3617986190168745, 0.3448070650356635, 0.20659265289967932, 0.08551401097274297], 6.482179393858132],
     #                  [10, [0.32964853184115245, 0.3313521152127662, 0.2001481102970499, 0.08140985308334522, 0.04368151099364375, 0.008419052421877885, 2.952833553465375e-06, 0.0011741574947806883, 0.002994381339110525], 5.887346632957815]]
     
-    # for linear_model in linear_models:
-    #     for spread in [0.5, 1, 1.5, 2, 2.5, 3]:
-    #         new_trader = Trader(use_macd=False, linear_regression=linear_model, REGRESSION_SPREAD=spread)
-    #         round = 1
-    #         max_time = 2*100000
-    #         names = False
-    #         halfway = True
-    #         amethysts, starfruit = 0, 0
-    #         for day in range(-2, 1):
-    #             profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
-    #             # Tally Results
-    #             final_key = max(list(profits.keys()))
-    #             amethysts += profits[final_key]['AMETHYSTS']
-    #             starfruit += profits[final_key]['STARFRUIT']
-    #         linear_results.append((linear_model[0], spread, amethysts, starfruit))
+    # for linear_model in linear_models[:1]:
+    #     for spread in [1, 2, 3, 4, 5]:
+    #         for reg_extra in range(5,10,5):
+    #             new_trader = Trader(use_macd=False, linear_regression=linear_model, regression_extra=reg_extra, REGRESSION_SPREAD=spread)
+    #             round = 1
+    #             max_time = 2*100000
+    #             names = False
+    #             halfway = True
+    #             amethysts, starfruit = 0, 0
+    #             for day in range(-2, 1):
+    #                 profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
+    #                 # Tally Results
+    #                 final_key = max(list(profits.keys()))
+    #                 amethysts += profits[final_key]['AMETHYSTS']
+    #                 starfruit += profits[final_key]['STARFRUIT']
+    #             linear_results.append((spread, reg_extra, amethysts, starfruit))
             
     # linear_results.sort(key=lambda x: x[3], reverse=True)
     
-    # # # # # print(f"MACD Results Parameter Optimization")
-    # # # # # print(macd_results[:min(20, len(macd_results))])
+    # # # # # # # # # print(f"MACD Results Parameter Optimization")
+    # # # # # # # # # print(macd_results[:min(20, len(macd_results))])
     
     # print(f"Linear Regression Results Parameter Optimization")
     # print(linear_results[:min(20, len(linear_results))])
     
-    # print()
+    print()
     
     # print(f"Spread Results and Extra Parameter Optimization")
     # print(spread_results[:10])

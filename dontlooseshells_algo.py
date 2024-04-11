@@ -1,7 +1,7 @@
 import json
 from datamodel import Order, ProsperityEncoder, Symbol, TradingState, Trade, OrderDepth
 from typing import Any, Dict, List
-import numpy 
+import numpy as np
 import math
 import statistics
 import jsonpickle
@@ -107,24 +107,29 @@ class Trader:
     
     # Hyper Parameters
     macd_window = [12, 26 , 9]
-    linear_regression = [5, [0.33791332214313974, 0.3337481764570071, 0.20117035619236828, 0.08200505355958354, 0.043948316609723814], 6.1159]
+    linear_regression = [6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236]
     SPREAD = 3
     macd_active = False
     MACD_MAX_ORDER = 100000000
     extra=20
     REGRESSION_SPREAD = 1
+    regression_extra = 20
+    days=3
+    price_diff=3
     
     starfruit_cache = []
     starfruit_prices = []
-    starfruit_macd = []
-    starfruit_signal = []
+    starfruit_past_bids = []
+    starfruit_past_asks = []
     starfruit_ema_a = []
     starfruit_ema_b = []
+    starfruit_vwap = []
     
     
     def __init__(self, macd_window=[12, 26 , 9], 
-                        linear_regression=[5, [0.33791332214313974, 0.3337481764570071, 0.20117035619236828, 0.08200505355958354, 0.043948316609723814], 6.1159],
-                        SPREAD=3, REGRESSION_SPREAD=1, use_macd=False, MACD_MAX_ORDER = 100000000, extra=20):
+                        linear_regression=[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236],
+                        SPREAD=3, REGRESSION_SPREAD=1, use_macd=False, MACD_MAX_ORDER = 100000000, extra=20, regression_extra=20,
+                        price_diff=3, days=3):
         
         # Hyper Parameters for tuning
         self.linear_regression = linear_regression
@@ -134,41 +139,25 @@ class Trader:
         self.MACD_MAX_ORDER = MACD_MAX_ORDER
         self.extra = extra
         self.REGRESSION_SPREAD = REGRESSION_SPREAD
-        
+        self.regression_extra = regression_extra        
+        self.price_diff = price_diff
+        self.days = days
     
     
-    def calculate_ema(self, product, windows=[12, 26 , 9]):
+    def calculate_prices(self, days: int):
+        # Calculate the average bid and ask price for the last days
 
-        for window in windows[:2]:
-            K = 2 / (window + 1)
-            
-            if len(self.df[product]['MID_PRICE']) < window:
-                return
-            elif len(self.df[product]['MID_PRICE']) == window:
-                if window == windows[0]:
-                    self.df[product]['EMA_A'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
-                elif window == windows[1]:
-                    self.df[product]['EMA_B'].append(statistics.mean(self.df[product]['MID_PRICE'][:window]))
-                    
-            # len > window
-            else:
-                if window == windows[0]:
-                    self.df[product]['EMA_A'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_A'][-1]))
-                elif window == windows[1]:
-                    self.df[product]['EMA_B'].append(self.df[product]['MID_PRICE'][-1] * K + ((1-K) * self.df[product]['EMA_B'][-1]))
-                    
-        if len(self.df[product]['EMA_A']) > 0 and len(self.df[product]['EMA_B']) > 0:
-            self.df[product]['MACD'].append(self.df[product]['EMA_A'][-1] - self.df[product]['EMA_B'][-1])
-            
-        window = windows[2]
-        
-        K = 2 / (window + 1)
-        if len(self.df[product]['MACD']) < window:
-            return
-        elif len(self.df[product]['MACD']) == window:
-            self.df[product]['SIGNAL'].append(statistics.mean(self.df[product]['MACD'][:window]))
-        else:
-            self.df[product]['SIGNAL'].append(self.df[product]['MACD'][-1] * K + ((1-K) * self.df[product]['SIGNAL'][-1]))
+        relevant_bids = []
+        for bids in self.starfruit_past_bids[-days:]:
+            relevant_bids.extend([(value, bids[value]) for value in bids])
+        relevant_asks = []
+        for asks in self.starfruit_past_asks[-days:]:
+            relevant_asks.extend([(value, asks[value]) for value in asks])
+
+        avg_bid = np.average([x[0] for x in relevant_bids], weights=[x[1] for x in relevant_bids])
+        avg_ask = np.average([x[0] for x in relevant_asks], weights=[x[1] for x in relevant_asks])
+
+        return avg_bid, avg_ask
             
             
     def calculate_ema2(self, product, windows=[12, 26, 9]):
@@ -209,11 +198,14 @@ class Trader:
     def z_score(self, df):
         return (df[-1] - statistics.mean(df)) / statistics.stdev(df)
     
+
+    
     def extract_values(self, orders_sell, orders_buy):
         
-        min_bid, max_bid, bid_volume, best_bid_volume, best_bid_price = 0, 0, 0, 0, 0
+        min_bid, max_bid, bid_volume, best_bid_volume, best_bid_price, depth = 0, 0, 0, 0, 0, set()
         # match bids with our ask
         for price, amount in orders_buy.items():
+            depth.add(price)
             
             if min_bid == 0:
                 min_bid = price
@@ -227,9 +219,10 @@ class Trader:
                 best_bid_volume = amount
                 best_bid_price = price
         
-        min_ask, max_ask, ask_volume, best_ask_volume, best_ask_price = 0, 0, 0, 0, math.inf
+        min_ask, max_ask, ask_volume, best_ask_volume, best_ask_price, ask_depth = 0, 0, 0, 0, math.inf, set()
         for price, amount in orders_sell.items():
-                
+            
+            ask_depth.add(price)
             if min_ask == 0:
                 min_ask = price
             else:
@@ -241,8 +234,9 @@ class Trader:
             if price < best_ask_price or price == best_ask_price and amount > best_ask_volume:
                 best_ask_volume = amount
                 best_ask_price = price
-                
-        return min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price
+        
+        
+        return min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, len(depth), len(ask_depth)
         
     def calc_next_price(self, current_mid):
         #print(self.starfruit_cache)
@@ -251,7 +245,8 @@ class Trader:
         next_price = intercept
         for i in range(0, len(coef)):
             #print("Coefficient: " + str(coef[i]) + " Current Mid Price: " + str(self.starfruit_cache[-(i + 1)]))
-            next_price += coef[i] * self.starfruit_cache[-(i + 1)]
+            #next_price += coef[i] * self.starfruit_cache[-(i + 1)]
+            next_price += coef[i] * self.starfruit_vwap[-(i + 1)]
         
         return next_price
     
@@ -269,8 +264,9 @@ class Trader:
         #self.df[product]['BEST_BID'].append(best_bid_price)
             
         #if len(self.df[product]['MID_PRICE']) >= 26:
-        self.starfruit_prices.append(mid_price)
-        self.calculate_ema2(product, self.macd_window)
+        if product == 'STARFRUIT':
+            self.starfruit_prices.append(mid_price)
+        #self.calculate_ema2(product, self.macd_window)
             
     def run(self, state: TradingState):
 
@@ -309,12 +305,12 @@ class Trader:
             elif product == 'STARFRUIT':
                 if not self.macd_active: 
                     num_lags, coefficients, intercept = self.linear_regression
-                    #starfruit_orders = self.trade_regression(state, product, num_lags, coefficients, intercept)
+                    starfruit_orders = self.trade_regression(state, product, num_lags, coefficients, intercept)
                     # Current Best regression
-                    starfruit_orders = self.avellaneda(state, product)
-                                       
+                    #starfruit_orders = self.avellaneda(state, product)                                       
                 else:
                     starfruit_orders = self.trade_momentum(state, product)
+                    
                 result[product] = starfruit_orders
 		# String value holding Trader state data required. 
 		# It will be delivered as TradingState.traderData on next execution.
@@ -333,7 +329,7 @@ class Trader:
         # Orders to be placed on exchange matching engine
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
+        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
         
         #mid_price = (best_bid_price + best_ask_price) / 2
         mid_price = statistics.median([max_bid, min_ask])
@@ -418,8 +414,8 @@ class Trader:
         orders1_sell, orders1_buy = collections.OrderedDict(sorted(order_depths[product1].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product1].buy_orders.items(), reverse=True))
         orders2_sell, orders2_buy = collections.OrderedDict(sorted(order_depths[product2].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product2].buy_orders.items(), reverse=True))
         
-        min_bid1, max_bid1, bid_volume1, best_bid_volume1, min_sell1, max_sell1, sell_volume1, best_ask_volume1, best_bid_price1, best_ask_price1 = self.extract_values(orders1_sell, orders1_buy)
-        min_bid2, max_bid2, bid_volume2, best_bid_volume2, min_sell2, max_sell2, sell_volume2, best_ask_volume2, best_bid_price2, best_ask_price2 = self.extract_values(orders2_sell, orders2_buy)
+        min_bid1, max_bid1, bid_volume1, best_bid_volume1, min_sell1, max_sell1, sell_volume1, best_ask_volume1, best_bid_price1, best_ask_price1, buy_depth1, ask_depth1 = self.extract_values(orders1_sell, orders1_buy)
+        min_bid2, max_bid2, bid_volume2, best_bid_volume2, min_sell2, max_sell2, sell_volume2, best_ask_volume2, best_bid_price2, best_ask_price2, buy_depth2, ask_depth2 = self.extract_values(orders2_sell, orders2_buy)
         
         mid_price1, mid_price2 = (max_bid1 + max_sell1) / 2, (max_bid2 + max_sell2) / 2
         
@@ -472,7 +468,7 @@ class Trader:
         self.add_to_df(product2, [state.timestamp, max_bid2, min_bid2, max_sell2, min_sell2, bid_volume2, sell_volume2, mid_price2, best_ask_price2, best_bid_price2])
         
         return orders
-                        
+           
     
     def trade_regression(self, state: TradingState, product: str, N: int, coefficients: List[float], intercept: float) -> None:
         
@@ -481,371 +477,110 @@ class Trader:
         # Orders to be placed on exchange matching engine
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
-        #min_bid, max_bid, bid_volume, best_bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values()), max(orders_buy.values())
-        #min_ask, max_ask, ask_volume, best_ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values()), max(orders_sell.values())
+        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
         
-        #best_bid_price = [price for price, amount in orders_buy.items() if amount == best_bid_volume][0]
-        #best_ask_price = [price for price, amount in orders_sell.items() if amount == best_ask_volume][0]
-        
-        #mid_price = (best_ask_price + best_bid_price) / 2
         mid_price = statistics.median([max_bid, min_ask])
-        # Skip if not enough data
-        if len(self.starfruit_cache) < N:
-            self.starfruit_cache.append(mid_price)
-        else:
-            self.starfruit_cache.append(mid_price)
-            self.starfruit_cache.pop(0)
+        vwap_buy, vwap_sell = [price * amount for price, amount in orders_buy.items()], [price * -amount for price, amount in orders_sell.items()]
+        vwap = sum(vwap_buy + vwap_sell) / (sum([amount for price, amount in orders_buy.items()])  - sum([amount for price, amount in orders_sell.items()]))
         
-        #print(self.df[product]['MID_PRICE'])
-        if len(self.starfruit_cache) < N:
-            self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+        
+        #Skip if not enough data
+        if len(self.starfruit_vwap) < N:
+            self.starfruit_vwap.append(vwap)
+            #self.starfruit_cache.append(mid_price)
+        else:
+            #self.starfruit_cache.append(mid_price)
+            #self.starfruit_cache.pop(0)
+            self.starfruit_vwap.append(vwap)
+            self.starfruit_vwap.pop(0)
+            
+        self.starfruit_past_asks.append(orders_sell)
+        self.starfruit_past_bids.append(orders_buy)
+        
+        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+        if len(self.starfruit_vwap) < N:
             return orders
         
+        
         # Calculate regression
-        ideal_mid_price = self.calc_next_price(mid_price)
-        #print("Ideal Mid Price: " + str(ideal_mid_price) + " at " + str(state.timestamp) + "Current Mid Price: " + str(mid_price))
-        #ideal_mid_price = int(round(ideal_mid_price, 2))
+        #ideal_mid_price = self.calc_next_price(mid_price)
+        ideal_mid_price = self.calc_next_price(vwap)
+        ideal_mid_price = int(round(ideal_mid_price, 2))
     
-        undercut_buy = best_bid_price + self.REGRESSION_SPREAD
-        undercut_sell = best_ask_price - self.REGRESSION_SPREAD
+        undercut_buy = best_bid_price + 1 # best_bid price is the best price where others want to buy from us, 
+        undercut_sell = best_ask_price - 1 # best_ask price is the best price where others want to sell to us
+        
+        days = 3
+        min_price_diff = 3
 
         bid_pr = min(undercut_buy, ideal_mid_price - self.REGRESSION_SPREAD) # we will shift this by 1 to beat this price
         sell_pr = max(undercut_sell, ideal_mid_price + self.REGRESSION_SPREAD)
         
-        
+        avg_bid, avg_ask = self.calculate_prices(days)
+        num_sold, num_bought = 0, 0
         cpos = self.cpos[product]
 
         for price, amount in orders_buy.items():
             # Current price is greater than predicted next price, so we sell, amount here is positive
             if (price >= ideal_mid_price + self.REGRESSION_SPREAD and cpos > -self.pos_limits[product]):
-            #if (price <= ideal_mid_price - self.SPREAD and cpos > -self.pos_limits[product]):
+                #or (cpos > 0 and price+1 == ideal_mid_price + self.REGRESSION_SPREAD)):
+              #if (price <= ideal_mid_price - self.SPREAD and cpos > -self.pos_limits[product]):
                 sell_amount = max(-amount, -self.pos_limits[product] - cpos)
             
                 if sell_amount < 0:
                     print("SELL", str(sell_amount) + "x", price)
                     cpos += sell_amount
+                    num_sold += 1
                     orders.append(Order(product, price, sell_amount))
-                    
-        # if (cpos > -self.pos_limits[product]) and (self.cpos[product] > 0):
-        #     num = max(-self.extra, -self.pos_limits[product]-cpos)
-        #     orders.append(Order(product, max(undercut_sell - self.SPREAD, ideal_mid_price + self.REGRESSION_SPREAD), num))
-        #     cpos += num
-
-        # if (cpos > -self.pos_limits[product]) and (self.cpos[product] < -15):
-        #     num = max(-self.extra, -self.pos_limits[product]-cpos)
-        #     orders.append(Order(product, max(undercut_sell + self.SPREAD, ideal_mid_price + self.REGRESSION_SPREAD), num))
-        #     cpos += num
         
-        if cpos > -self.pos_limits[product]:
-            num = -self.pos_limits[product] - cpos
+        
+        if (cpos > -self.pos_limits[product]):
+            i = num_sold
+            while i > len(orders_buy) and cpos > -self.pos_limits[product] and avg_ask - orders_buy[i][0] <= min_price_diff:
+                num = min(-self.pos_limits[product]-cpos, -orders_buy[i][1])
+                orders.append(Order(product, orders_buy[i][0], num))
+                cpos += num
+                i += 1
+
+        if (cpos > -self.pos_limits[product]):
+            num = -self.pos_limits[product]-cpos
             orders.append(Order(product, sell_pr, num))
             cpos += num
-                    
-        #Predicted it will increase and hence we will short
-        # if cpos > -self.pos_limits[product] and ideal_mid_price > mid_price:
-        #     sell_pr = min(best_bid_price + self.SPREAD, ideal_mid_price + self.SPREAD)
-        #     sell_amount = -self.pos_limits[product] - cpos
-        #     print("SELL", str(sell_amount) + "x", sell_pr)
-        #     orders.append(Order(product, sell_pr, sell_amount))
-        #     cpos += sell_amount
 
-                
         cpos = self.cpos[product]
         
         for price, amount in orders_sell.items():
             # Current lower than predicted next price, so we buy, amount here is negative
             if (price <= ideal_mid_price - self.REGRESSION_SPREAD and cpos < self.pos_limits[product]):
+                #or (cpos < 0 and price-1 == ideal_mid_price - self.REGRESSION_SPREAD)):
             #if (price >= ideal_mid_price + self.SPREAD and cpos < self.pos_limits[product]):
                 buy_amount = min(-amount, self.pos_limits[product] - cpos)
                 if buy_amount > 0:
                     print("BUY", str(buy_amount) + "x", price)
                     orders.append(Order(product, price, buy_amount))
                     cpos += buy_amount
-                    
-        # if (cpos < self.pos_limits[product]) and (self.cpos[product] < 0):
-        #     num = min(self.extra, self.pos_limits[product] - cpos)
-        #     orders.append(Order(product, min(undercut_buy + self.SPREAD, ideal_mid_price - self.REGRESSION_SPREAD), num))
-        #     cpos += num
-
-        # if (cpos < self.pos_limits[product]) and (self.cpos[product] > 15):
-        #     num = min(self.extra, self.pos_limits[product] - cpos)
-        #     orders.append(Order(product, min(undercut_buy - self.SPREAD, ideal_mid_price - self.REGRESSION_SPREAD), num))
-        #     cpos += num
+                    num_bought += 1
         
-        
+         
+        if (cpos < self.pos_limits[product]):
+            i = num_bought
+            while i > len(orders_sell) and cpos < self.pos_limits[product] and orders_sell[i][0] - avg_bid  <= min_price_diff:
+                num = max(self.pos_limits[product]-cpos, -orders_sell[i][1])
+                orders.append(Order(product, orders_sell[i][0], num))
+                cpos += num
+                i += 1
+                
         if cpos < self.pos_limits[product]:
             num = self.pos_limits[product] - cpos
             orders.append(Order(product, bid_pr, num))
             cpos += num
-                    
-        #Predicted it will decrease and hence we will LONG
-        # if cpos < self.pos_limits[product] and ideal_mid_price < mid_price:
-        #     buy_amount = self.pos_limits[product] - cpos
-        #     buy_pr = max(best_ask_price - self.SPREAD, ideal_ mid_price - self.SPREAD)
-        #     print("BUY", str(buy_amount) + "x", buy_pr)
-        #     orders.append(Order(product, buy_pr, buy_amount))
-        #     cpos += buy_amount
-    
             
-        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+        
+            
+        #self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
         return orders
     
     
-    
-    def grid_trade(self, state: TradingState, product: str):
-        # Stationary grid trading
-        T = 5
-        print("Grid Trading " + product + " at " + str(state.timestamp))
-        orders: list[Order] = []
-        
-        # Orders to be placed on exchange matching engine
-        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
-        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
-        mid_price = (max_bid + min_ask) / 2
-        
-        if len(self.df[product]['MID_PRICE']) < T:
-            self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
-            return orders
-        
-        MA = sum(self.df[product]['MID_PRICE'][-T:]) / T
-        #std = statistics.stdev(self.df[product]['MID_PRICE'][-T:])
-        std = 1
-        if std == 0:
-            return orders
-        elif std < 0:
-            std = -std
-        
-        assert std > 0
-        grid = [[2, 1.5], [2, 1], [1, 0.5]]   # Unit size, price difference from MA
-        
-        cpos_original = self.cpos[product]
-        # Strategy is to open short/long position when per price difference from MA and current middle price
-        # Each increment is 0.25 standard deviation
-        print("Current Position: " + str(cpos_original) + " of " + product + " at " + str(state.timestamp))
-        if cpos_original < 0:
-            cpos = -cpos_original
-        else:
-            cpos = cpos_original
-        
-        assert cpos >= 0
-        extra = self.pos_limits[product] - cpos
-        order_size = int(extra / 10)
-        assert order_size > 0
-        
-        
-        # Set up grid for Buy Orders
-        for interval in grid:
-            unit_size, price = interval[0] * order_size, MA + (-1 * interval[1]) * std
-            print("Unit Size: " + str(unit_size) + " at " + str(price))
-            
-            if unit_size > 0 and cpos_original < self.pos_limits[product]:
-                buy_amount = min(unit_size, self.pos_limits[product] - cpos_original)
-                if buy_amount > 0:
-                    print("BUY", str(buy_amount) + "x", price)
-                    orders.append(Order(product, price, buy_amount))
-                    cpos_original += unit_size
-                    
-        cpos_original = self.cpos[product]
-        
-        # Set up grid for Sell Orders
-        for interval in grid:
-            unit_size, price = -1 * interval[0] * order_size, MA + interval[1] * std
-            print("Unit Size: " + str(unit_size) + " at " + str(price))
-            
-            if unit_size < 0 and cpos_original > -self.pos_limits[product]:
-                sell_amount = max(unit_size, -self.pos_limits[product] - cpos_original)
-                if sell_amount < 0:
-                    print("SELL", str(unit_size) + "x", price)
-                    orders.append(Order(product, price, sell_amount))
-                    cpos_original += sell_amount
-                            
-        
-        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
-        return orders
-    
-        
-    def market_make(self, state: TradingState, product:str):
-        # Market making accounting for order imbalance and volatility
-        #  HFT Active Threshold # [aHmin, aHmax]
-        aHmin, aHmax = [5000, 5000]
-        
-        orders: list[Order] = []
-        
-        # Orders to be placed on exchange matching engine
-        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
-        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
-        mid_price = (max_bid + min_ask) / 2
-        
-        
-        
-        # Start trading when at least 5 data points are available
-        if len(self.df[product]['MID_PRICE']) < 10:
-            self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
-            return orders
-
-        price_fluc = abs((self.df[product]['MID_PRICE'][-1] - self.df[product]['MID_PRICE'][-2])/self.df[product]['MID_PRICE'][-1]) * 10000
-        print("Price Fluctuation: " + str(price_fluc) + " at " + str(state.timestamp))
-        if price_fluc < aHmin: # Should be below inbetween range
-            self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
-            return orders   
-        
-        
-        lambda1, lambda2, TICK_SIZE = 0.5, 1, 5
-
-        #print("Bid Volume: " + str(bid_volume) + " Ask Volume: " + str(ask_volume))
-        order_metric = (bid_volume - abs(ask_volume)) / (bid_volume + abs(ask_volume))
-        #Pt + (|Pt-Pt-1|+2)ts , if (qb - qs)/(qb + qs) > 0.5
-        #Pt + |Pt-Pt-1|ts , if (qs - qb)/(qb + qs) > 0.5
-        #Pt + (|Pt-Pt-1|+1)ts , if others    
-        #print("Current Bid Price: " + str(best_bid_price) + " Current Ask Price: " + str(best_ask_price) + " Mid Price: " + str(mid_price) + " Order Metric: " + str(order_metric))
-        #print("Last best bid price: " + str(self.df[product]['BEST_BID'][-1]) + " Last best ask price: " + str(self.df[product]['BEST_ASK'][-1]) + " Last Mid Price: " + str(self.df[product]['MID_PRICE'][-1]))
-        # More buy orders than sell orders, ask price is increased, bid price is decreased
-        if order_metric > lambda1:
-            #ask_price = best_ask_price - (abs(best_ask_price - self.df[product]['BEST_ASK'][-1]) + 2) * TICK_SIZE
-            #bid_price = best_bid_price + (abs(best_bid_price - self.df[product]['BEST_BID'][-1])) * TICK_SIZE
-            ask_price = mid_price + (abs(mid_price - self.df[product]['MID_PRICE'][-1]) + 2) * TICK_SIZE
-            bid_price = mid_price - (abs(mid_price - self.df[product]['MID_PRICE'][-1])) * TICK_SIZE
-        
-        # More sell orders than buy orders, ask price is decreased, bid price is increased
-        elif order_metric < -lambda1:
-            #ask_price = best_ask_price - abs(best_ask_price - self.df[product]['BEST_ASK'][-1]) * TICK_SIZE
-            #bid_price = best_bid_price + (abs(best_bid_price - self.df[product]['BEST_BID'][-1]) + 2) * TICK_SIZE
-            ask_price = mid_price - (abs(mid_price - self.df[product]['MID_PRICE'][-1])) * TICK_SIZE
-            bid_price = mid_price + (abs(mid_price - self.df[product]['MID_PRICE'][-1]) + 2) * TICK_SIZE
-            
-        # Equal buy and sell orders, ask price is increased, bid price is decreased
-        else:
-            #ask_price = best_ask_price - (abs(best_ask_price - self.df[product]['BEST_ASK'][-1]) + 1) * TICK_SIZE
-            #bid_price = best_bid_price + (abs(best_bid_price - self.df[product]['BEST_BID'][-1]) + 1) * TICK_SIZE
-            
-            ask_price = mid_price + (abs(mid_price - self.df[product]['MID_PRICE'][-1]) + 1) * TICK_SIZE
-            bid_price = mid_price - (abs(mid_price - self.df[product]['MID_PRICE'][-1]) + 1) * TICK_SIZE
-            
-        #print("ASK: " + str(ask_price) + " BID: " + str(bid_price))
-        # Estimating current volatilities
-        #curr_vol = statistics.stdev(self.df[product]['MID_PRICE'][-3:])
-        #past_10_vol = statistics.stdev(self.df[product]['MID_PRICE'][-10:])
-        
-        #if curr_vol > past_10_vol:
-        #    ask_price += TICK_SIZE * (1 + (curr_vol - past_10_vol)/past_10_vol)
-        #    bid_price -= TICK_SIZE * (1 + (curr_vol - past_10_vol)/past_10_vol)
-            
-        #elif curr_vol < past_10_vol:
-        #    ask_price += TICK_SIZE * (1 - (past_10_vol - curr_vol)/past_10_vol)
-        #    bid_price -= TICK_SIZE * (1 - (past_10_vol - curr_vol)/past_10_vol)
-            
-        #print("ASK: " + str(ask_price) + " BID: " + str(bid_price))
-        
-        cpos = self.cpos[product]
-        
-        orders.append(Order(product, int(ask_price), -self.pos_limits[product] - cpos))
-        orders.append(Order(product, int(bid_price), self.pos_limits[product] - cpos))
-        
-        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
-        return orders            
-    
-    def calculate_reservation_prices(self, mid_price, PARAMS, product:str):
-        
-        #PARAMS['w'] = 0.5 * (PARAMS['y'] ** 2) * (PARAMS['std'] **2) * (self.pos_limits[product] + 1)**2
-        PARAMS['w'] = 20
-        ask_price = mid_price + (1/PARAMS['y']) * math.log(1 + ((1 - 2 * PARAMS['q']) * (PARAMS['y']**2) * PARAMS['std']**2)/(2*PARAMS['w'] - (PARAMS['y'] ** 2) * (PARAMS['q'] ** 2) * PARAMS['std']**2))
-        bid_price = mid_price + (1/PARAMS['y']) * math.log(1 + ((-1 - 2*PARAMS['q']) * (PARAMS['y']**2) * PARAMS['std']**2)/(2*PARAMS['w'] - (PARAMS['y'] ** 2) * (PARAMS['q'] ** 2) * PARAMS['std']**2))
-        
-        print(f"Reservation Bid Price: {bid_price} Reservation Ask Price: {ask_price} at {mid_price} for {product}, Average Reservation Price: {(ask_price + bid_price)/2}")
-        return bid_price, ask_price
-            
-    
-    
-    def avellaneda(self, state: TradingState, product:str):
-        
-        orders = []
-        # Orders to be placed on exchange matching engine
-        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
-        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
-        mid_price = (max_bid + min_ask) / 2
-        
-        print(f"Current Mid Price: {mid_price} at {state.timestamp}, Min Bid: {min_bid}, Max Bid: {max_bid}, Min Ask: {min_ask}, Max Ask: {max_ask}, Bid Volume: {bid_volume}, Ask Volume: {ask_volume}, Best Ask Price: {best_ask_price}, Best Bid Price: {best_bid_price}")
-        cpos = self.cpos[product]
-        
-        # Parameters here, Reservation Price, Spread
-        PARAMS = {
-            "s": mid_price,
-            "q": cpos,
-            "y": 0.5,
-            "std": 0.05
-        }
-        # Reservation Bid Price is the price at which we are willing to buy one more asset, Reservation Ask Price is the price at which we are willing to sell one more asset
-        reservation_bid, reservation_ask = self.calculate_reservation_prices(mid_price, PARAMS, product)
-        if reservation_bid < 0 or reservation_ask < 0:
-            return orders
-        
-        # Adjust downwards:
-        reservation_bid = reservation_bid - 0
-        reservation_ask = reservation_ask + 0
-        
-        # Temporary using Stationary Trading Method
-        num_sell = 0
-        if len(orders_buy) != 0:
-            for price, amount in orders_buy.items():
-                if (price > reservation_ask) and cpos > -self.pos_limits[product]:
-                    sell_amount = max(-amount, -self.pos_limits[product] - cpos)
-                    #sell_amount = -amount
-                    if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
-                        cpos += sell_amount
-                        # cpos -= amount
-                        orders.append(Order(product, price, sell_amount))
-                        num_sell += sell_amount
-                        
-        cpos = self.cpos[product]
-        num_buy = 0
-        if len(orders_sell) != 0:
-            for price, amount in orders_sell.items():
-            # Current lower than predicted next price, so we buy, amount here is negative
-                if (price < reservation_bid) and cpos < self.pos_limits[product]:
-                    buy_amount = min(-amount, self.pos_limits[product] - cpos)
-                    if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
-                        orders.append(Order(product, price, buy_amount))
-                        #cpos += amount
-                        cpos += buy_amount
-                        num_buy += buy_amount
-                        
-                    
-                        
-        # Current Extra
-        current = num_buy + num_sell + self.cpos[product]
-        if current > 0:
-            extra = self.pos_limits[product] - current
-        else:
-            extra = -self.pos_limits[product] - current
-            extra = -extra
-            
-        # Fill up orders
-        # orders.append(Order(product, int(reservation_ask), -extra))
-        # orders.append(Order(product, int(reservation_bid), extra))
-        
-        DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2, best_ask_price, best_bid_price]
-        # Append to database
-        self.add_to_df(product, DATA)
-        return orders        
-    
-        # Adjust Reservation Price based on current position, 
-        # If Positive Inventory, researvation price < midprice, else > midprice
-        
-        
-        
-        # Adjust Spread based on Order-Book Liquidity 
-        
-        
-        
     def trade_momentum(self, state: TradingState, product:str):
         
         orders = []
@@ -853,13 +588,7 @@ class Trader:
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
         
-        #min_bid, max_bid, bid_volume, best_bid_volume = min(orders_buy.keys()), max(orders_buy.keys()), sum(orders_buy.values()), max(orders_buy.values())
-        #min_ask, max_ask, ask_volume, best_ask_volume = min(orders_sell.keys()), max(orders_sell.keys()), sum(orders_sell.values()), max(orders_sell.values())
-        
-        #best_bid_price = [price for price, amount in orders_buy.items() if amount == best_bid_volume][0]
-        #best_ask_price = [price for price, amount in orders_sell.items() if amount == best_ask_volume][0]
-        
-        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price = self.extract_values(orders_sell, orders_buy)
+        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
         #mid_price = (best_ask_price + best_bid_price) / 2
         mid_price = statistics.median([max_bid, min_ask])
 
@@ -922,6 +651,114 @@ class Trader:
                 cpos += sell_amount
                         
         return orders
+    
+    
+    
+    def calculate_reservation_prices(self, mid_price, PARAMS, product:str):
+        #PARAMS['w'] = 0.5 * (PARAMS['y'] ** 2) * (PARAMS['std'] **2) * (self.pos_limits[product] + 1)**2
+        PARAMS['w'] = 20
+        ask_price = mid_price + (1/PARAMS['y']) * math.log(1 + ((1 - 2 * PARAMS['q']) * (PARAMS['y']**2) * PARAMS['std']**2)/(2*PARAMS['w'] - (PARAMS['y'] ** 2) * (PARAMS['q'] ** 2) * PARAMS['std']**2))
+        bid_price = mid_price + (1/PARAMS['y']) * math.log(1 + ((-1 - 2*PARAMS['q']) * (PARAMS['y']**2) * PARAMS['std']**2)/(2*PARAMS['w'] - (PARAMS['y'] ** 2) * (PARAMS['q'] ** 2) * PARAMS['std']**2))
+        
+        print(f"Reservation Bid Price: {bid_price} Reservation Ask Price: {ask_price} at {mid_price} for {product}, Average Reservation Price: {(ask_price + bid_price)/2}")
+        return int(bid_price), int(ask_price)
+    
+    
+    
+    def avellaneda(self, state: TradingState, product:str):
+        
+        orders = []
+        # Orders to be placed on exchange matching engine
+        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
+        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
+        
+        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
+        mid_price = (max_bid + min_ask) / 2
+        
+        print(f"Current Mid Price: {mid_price} at {state.timestamp}, Min Bid: {min_bid}, Max Bid: {max_bid}, Min Ask: {min_ask}, Max Ask: {max_ask}, Bid Volume: {bid_volume}, Ask Volume: {ask_volume}, Best Ask Price: {best_ask_price}, Best Bid Price: {best_bid_price}")
+        cpos = self.cpos[product]
+        
+        if len(self.starfruit_prices) < 5:
+            self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+            return orders
+
+        
+        
+        # Parameters here, Reservation Price, Spread
+        PARAMS = {
+            "s": mid_price,
+            "q": cpos,
+            "y": 1,
+            "std": statistics.stdev(self.starfruit_prices[-5:])
+        }
+        # Reservation Bid Price is the price at which we are willing to buy one more asset, Reservation Ask Price is the price at which we are willing to sell one more asset
+        reservation_bid, reservation_ask = self.calculate_reservation_prices(mid_price, PARAMS, product)
+        if reservation_bid < 0 or reservation_ask < 0:
+            return orders
+        
+        # Adjust downwards:
+        reservation_bid = reservation_bid - 1
+        reservation_ask = reservation_ask + 1
+        
+        # Temporary using Stationary Trading Method
+        num_sell = 0
+        if len(orders_buy) != 0:
+            for price, amount in orders_buy.items():
+                if (price > reservation_ask) and cpos > -self.pos_limits[product]:
+                    sell_amount = max(-amount, -self.pos_limits[product] - cpos)
+                    #sell_amount = -amount
+                    if sell_amount < 0:
+                        print("SELL", str(sell_amount) + "x", price)
+                        cpos += sell_amount
+                        # cpos -= amount
+                        orders.append(Order(product, price, sell_amount))
+                        num_sell += sell_amount
+                        
+        cpos = self.cpos[product]
+        
+        num_buy = 0
+        if len(orders_sell) != 0:
+            for price, amount in orders_sell.items():
+            # Current lower than predicted next price, so we buy, amount here is negative
+                if (price < reservation_bid) and cpos < self.pos_limits[product]:
+                    buy_amount = min(-amount, self.pos_limits[product] - cpos)
+                    if buy_amount > 0:
+                        print("BUY", str(buy_amount) + "x", price)
+                        orders.append(Order(product, price, buy_amount))
+                        #cpos += amount
+                        cpos += buy_amount
+                        num_buy += buy_amount
+                        
+        # Current Extra
+        current = num_buy + num_sell + self.cpos[product]
+        if current > 0:
+            extra = self.pos_limits[product] - current
+        else:
+            extra = -self.pos_limits[product] - current
+            extra = -extra
+            
+        # Fill up orders
+        orders.append(Order(product, max(int(reservation_ask), best_bid_price + 1), -extra))
+        orders.append(Order(product, min(int(reservation_bid), best_ask_price - 1), extra))
+        
+        DATA = [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, (max_bid + min_ask) / 2, best_ask_price, best_bid_price]
+        # Append to database
+        self.add_to_df(product, DATA)
+        return orders        
+    
+        # Adjust Reservation Price based on current position, 
+        # If Positive Inventory, researvation price < midprice, else > midprice
+        
+        
+        
+        # Adjust Spread based on Order-Book Liquidity 
+        
+    
+        
+
+            
+        
+        
                                                         
                                                         
             
