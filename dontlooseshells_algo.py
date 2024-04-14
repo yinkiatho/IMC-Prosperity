@@ -100,105 +100,60 @@ inner_dict = {
 
 class Trader:
     
-    df = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
-    empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
-    pos_limits = {'AMETHYSTS': 20, 'STARFRUIT': 20}
-    cpos = {'AMETHYSTS': 0, 'STARFRUIT': 0}
+    #df = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict}
+    empty_state = {'AMETHYSTS': inner_dict, 'STARFRUIT': inner_dict, 'ORCHIDS': inner_dict}
+    pos_limits = {'AMETHYSTS': 20, 'STARFRUIT': 20, 'ORCHIDS':100}
+    cpos = {'AMETHYSTS': 0, 'STARFRUIT': 0, 'ORCHIDS': 0}
     
     # Hyper Parameters
-    macd_window = [12, 26 , 9]
     linear_regression = [6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236]
+    
+    # lag, total_tariff, sunlight, ideal humidity boolean, humidity away from ideal
+    orchids_regression =  [1.00005579, -0.0284300701, -0.0000203225,  0.11016487, 0.0115631195]
     SPREAD = 3
-    macd_active = False
-    MACD_MAX_ORDER = 100000000
     extra=20
     REGRESSION_SPREAD = 1
     regression_extra = 20
     days=3
     price_diff=3
+    lower_bound=0
+    upper_bound=15
     
-    starfruit_cache = []
-    starfruit_prices = []
-    starfruit_past_bids = []
-    starfruit_past_asks = []
-    starfruit_ema_a = []
-    starfruit_ema_b = []
+    ORCHIDS_LIMIT = 100
+    
+    #starfruit_prices = []
     starfruit_vwap = []
+    orchids_last = 0
+    orchids_last_obs = []
+    
+    counter = 0
+    counter_beneath_threshold = 0
+    start_counter = 0
     
     
-    def __init__(self, macd_window=[12, 26 , 9], 
-                        linear_regression=[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236],
-                        SPREAD=3, REGRESSION_SPREAD=1, use_macd=False, MACD_MAX_ORDER = 100000000, extra=20, regression_extra=20,
+    def __init__(self, linear_regression=[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236],
+                        SPREAD=3, REGRESSION_SPREAD=1, extra=20, regression_extra=20, lower_bound=0, upper_bound=15, ORCHIDS_LIMIT=200,
                         price_diff=3, days=3):
         
         # Hyper Parameters for tuning
         self.linear_regression = linear_regression
-        self.macd_window = macd_window
         self.SPREAD = SPREAD
-        self.macd_active = use_macd
-        self.MACD_MAX_ORDER = MACD_MAX_ORDER
         self.extra = extra
         self.REGRESSION_SPREAD = REGRESSION_SPREAD
         self.regression_extra = regression_extra        
         self.price_diff = price_diff
         self.days = days
-    
-    
-    def calculate_prices(self, days: int):
-        # Calculate the average bid and ask price for the last days
-
-        relevant_bids = []
-        for bids in self.starfruit_past_bids[-days:]:
-            relevant_bids.extend([(value, bids[value]) for value in bids])
-        relevant_asks = []
-        for asks in self.starfruit_past_asks[-days:]:
-            relevant_asks.extend([(value, asks[value]) for value in asks])
-
-        avg_bid = np.average([x[0] for x in relevant_bids], weights=[x[1] for x in relevant_bids])
-        avg_ask = np.average([x[0] for x in relevant_asks], weights=[x[1] for x in relevant_asks])
-
-        return avg_bid, avg_ask
+        self.lower_bound = lower_bound
+        self.upper_bound = upper_bound
+        self.orchids_last = 0
+        self.orchids_last_obs = []
+        self.ORCHIDS_LIMIT = ORCHIDS_LIMIT
             
-            
-    def calculate_ema2(self, product, windows=[12, 26, 9]):
-
-        for window in windows[:2]:
-            K = 2 / (window + 1)
-            
-            if len(self.starfruit_prices) < window:
-                return
-            elif len(self.starfruit_prices) == window:
-                if window == windows[0]:
-                    self.starfruit_ema_a.append(statistics.mean(self.starfruit_prices[:window]))
-                elif window == windows[1]:
-                    self.starfruit_ema_b.append(statistics.mean(self.starfruit_prices[:window]))
-                    
-            # len > window
-            else:
-                if window == windows[0]:
-                    self.starfruit_ema_a.append(self.starfruit_prices[-1] * K + ((1-K) *  self.starfruit_ema_a[-1]))
-                elif window == windows[1]:
-                    self.starfruit_ema_b.append(self.starfruit_prices[-1] * K + ((1-K) * self.starfruit_ema_b[-1]))
-                    
-        if len( self.starfruit_ema_a) > 0 and len(self.starfruit_ema_b) > 0:
-            self.starfruit_macd.append( self.starfruit_ema_a[-1] -  self.starfruit_ema_b[-1])
-            
-        window = windows[2]
         
-        K = 2 / (window + 1)
-        if len(self.starfruit_macd) < window:
-            return
-        elif len(self.starfruit_macd) == window:
-            self.starfruit_signal.append(statistics.mean(self.starfruit_macd[:window]))
-        else:
-            self.starfruit_signal.append(self.starfruit_macd[-1] * K + ((1-K) * self.starfruit_signal[-1]))
-                
-        #return ema
     
     def z_score(self, df):
         return (df[-1] - statistics.mean(df)) / statistics.stdev(df)
     
-
     
     def extract_values(self, orders_sell, orders_buy):
         
@@ -252,21 +207,22 @@ class Trader:
     
     def add_to_df(self, product, data):
         timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price = data
-        self.df[product]['TIMESTAMP'].append(timestamp)
+        #self.df[product]['TIMESTAMP'].append(timestamp)
         #self.df[product]['MAX_BID'].append(max_bid)
         #self.df[product]['MIN_BID'].append(min_bid)
         #self.df[product]['MAX_ASK'].append(max_ask)
         #self.df[product]['MIN_ASK'].append(min_ask)
-        self.df[product]['BID_VOLUME'].append(bid_volume)
-        self.df[product]['ASK_VOLUME'].append(ask_volume)
-        self.df[product]['MID_PRICE'].append(mid_price)
+        #self.df[product]['BID_VOLUME'].append(bid_volume)
+        #self.df[product]['ASK_VOLUME'].append(ask_volume)
+        #self.df[product]['MID_PRICE'].append(mid_price)
         #self.df[product]['BEST_ASK'].append(best_ask_price)
         #self.df[product]['BEST_BID'].append(best_bid_price)
             
         #if len(self.df[product]['MID_PRICE']) >= 26:
-        if product == 'STARFRUIT':
-            self.starfruit_prices.append(mid_price)
+        #if product == 'STARFRUIT':
+            #self.starfruit_prices.append(mid_price)
         #self.calculate_ema2(product, self.macd_window)
+        return
             
     def run(self, state: TradingState):
 
@@ -303,15 +259,16 @@ class Trader:
                 #result[product] = []
                 
             elif product == 'STARFRUIT':
-                if not self.macd_active: 
-                    num_lags, coefficients, intercept = self.linear_regression
-                    starfruit_orders = self.trade_regression(state, product, num_lags, coefficients, intercept)
-                    # Current Best regression
-                    #starfruit_orders = self.avellaneda(state, product)                                       
-                else:
-                    starfruit_orders = self.trade_momentum(state, product)
-                    
+                num_lags, coefficients, intercept = self.linear_regression
+                starfruit_orders = self.trade_regression(state, product, num_lags, coefficients, intercept)    
                 result[product] = starfruit_orders
+                #result[product] = []
+                
+            elif product == 'ORCHIDS':
+                orchids_orders = self.trade_orchids_observations(state, product)
+                result[product] = orchids_orders
+                
+            
 		# String value holding Trader state data required. 
 		# It will be delivered as TradingState.traderData on next execution.
         traderData = jsonpickle.encode(self.df)
@@ -355,12 +312,12 @@ class Trader:
                         orders.append(Order(product, price, sell_amount))
                         
                         
-        if (cpos > -self.pos_limits['AMETHYSTS']) and (self.cpos[product] > 0):
+        if (cpos > -self.pos_limits['AMETHYSTS']) and (self.cpos[product] > self.lower_bound):
             num = max(-self.extra, -self.pos_limits['AMETHYSTS']-cpos)
             orders.append(Order(product, max(undercut_sell - self.SPREAD, acceptable_price + self.SPREAD), num))
             cpos += num
 
-        if (cpos > -self.pos_limits['AMETHYSTS']) and (self.cpos[product] < -15):
+        if (cpos > -self.pos_limits['AMETHYSTS']) and (self.cpos[product] < -self.upper_bound):
             num = max(-self.extra, -self.pos_limits['AMETHYSTS']-cpos)
             orders.append(Order(product, max(undercut_sell + self.SPREAD, acceptable_price + self.SPREAD), num))
             cpos += num
@@ -384,12 +341,12 @@ class Trader:
                         cpos += buy_amount
                         
         
-        if (cpos < self.pos_limits['AMETHYSTS']) and (self.cpos[product] < 0):
+        if (cpos < self.pos_limits['AMETHYSTS']) and (self.cpos[product] < self.lower_bound):
             num = min(self.extra, self.pos_limits['AMETHYSTS'] - cpos)
             orders.append(Order(product, min(undercut_buy + self.SPREAD, acceptable_price - self.SPREAD), num))
             cpos += num
 
-        if (cpos < self.pos_limits['AMETHYSTS']) and (self.cpos[product] > 15):
+        if (cpos < self.pos_limits['AMETHYSTS']) and (self.cpos[product] > self.upper_bound):
             num = min(self.extra, self.pos_limits['AMETHYSTS'] - cpos)
             orders.append(Order(product, min(undercut_buy - self.SPREAD, acceptable_price - self.SPREAD), num))
             cpos += num
@@ -493,14 +450,10 @@ class Trader:
             #self.starfruit_cache.pop(0)
             self.starfruit_vwap.append(vwap)
             self.starfruit_vwap.pop(0)
-            
-        self.starfruit_past_asks.append(orders_sell)
-        self.starfruit_past_bids.append(orders_buy)
-        
-        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+
+        #self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
         if len(self.starfruit_vwap) < N:
             return orders
-        
         
         # Calculate regression
         #ideal_mid_price = self.calc_next_price(mid_price)
@@ -510,15 +463,16 @@ class Trader:
         undercut_buy = best_bid_price + 1 # best_bid price is the best price where others want to buy from us, 
         undercut_sell = best_ask_price - 1 # best_ask price is the best price where others want to sell to us
         
-        days = 3
-        min_price_diff = 3
+        days = self.days
+        min_price_diff = self.price_diff
 
         bid_pr = min(undercut_buy, ideal_mid_price - self.REGRESSION_SPREAD) # we will shift this by 1 to beat this price
         sell_pr = max(undercut_sell, ideal_mid_price + self.REGRESSION_SPREAD)
         
-        avg_bid, avg_ask = self.calculate_prices(days)
         num_sold, num_bought = 0, 0
         cpos = self.cpos[product]
+        
+        
 
         for price, amount in orders_buy.items():
             # Current price is greater than predicted next price, so we sell, amount here is positive
@@ -533,19 +487,13 @@ class Trader:
                     num_sold += 1
                     orders.append(Order(product, price, sell_amount))
         
-        
-        if (cpos > -self.pos_limits[product]):
-            i = num_sold
-            while i > len(orders_buy) and cpos > -self.pos_limits[product] and avg_ask - orders_buy[i][0] <= min_price_diff:
-                num = min(-self.pos_limits[product]-cpos, -orders_buy[i][1])
-                orders.append(Order(product, orders_buy[i][0], num))
-                cpos += num
-                i += 1
+
 
         if (cpos > -self.pos_limits[product]):
             num = -self.pos_limits[product]-cpos
             orders.append(Order(product, sell_pr, num))
             cpos += num
+
 
         cpos = self.cpos[product]
         
@@ -561,99 +509,225 @@ class Trader:
                     cpos += buy_amount
                     num_bought += 1
         
-         
-        if (cpos < self.pos_limits[product]):
-            i = num_bought
-            while i > len(orders_sell) and cpos < self.pos_limits[product] and orders_sell[i][0] - avg_bid  <= min_price_diff:
-                num = max(self.pos_limits[product]-cpos, -orders_sell[i][1])
-                orders.append(Order(product, orders_sell[i][0], num))
-                cpos += num
-                i += 1
                 
         if cpos < self.pos_limits[product]:
             num = self.pos_limits[product] - cpos
             orders.append(Order(product, bid_pr, num))
             cpos += num
+        
+        return orders
+    
+    
+    def trade_orchids(self, state: TradingState, product: str):
+        
+        orders: list[Order] = []
+        
+        # Orders to be placed on exchange matching engine
+        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
+        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
+        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
+        
+        mid_price = statistics.median([max_bid, min_ask])
+        
+        orchid_obs = state.observations.conversionObservations['ORCHIDS']
+        
+        bid_pr, ask_pr, transportFees, exportTariff, importTariff, sunlight, humidity = orchid_obs.bidPrice, orchid_obs.askPrice, orchid_obs.transportFees, orchid_obs.exportTariff, orchid_obs.importTariff, orchid_obs.sunlight, orchid_obs.humidity
+        
+        self.orchids_last = mid_price
+        self.orchids_last_obs = [bid_pr, ask_pr, transportFees, exportTariff, importTariff, sunlight, humidity]
+                
+        # Avoiding when bad humidity
+        buy_orchids , sell_orchids = False, False
+        hum_away = 0
+        if humidity < 60 or humidity > 80:
+            buy_orchids = True
+            if humidity < 60:
+                multiplier = 0.02 * int((60 - humidity) / 5) * mid_price
+                #multiplier = ((60-humidity) * self.orchids_regression[4])
+            else:
+                multiplier = 0.02 * int((humidity - 80) / 5) * mid_price 
+                
+        else:
+            sell_orchids = True
+            multiplier = -0.02 * mid_price
+            
+        total_tariffs = exportTariff + importTariff + transportFees
+        if total_tariffs >= 9:
+            tariffs_mup = 1
+        else:
+            tariffs_mup = -1
+
+        threshold = 2500
+        timestamp = state.timestamp
+        
+        # Reset
+
+        self.counter += 1
+        if sunlight < threshold:
+            self.counter_beneath_threshold += 1
+            
+        if self.counter_beneath_threshold >= int(17/24 * 10000):
+            self.start_counter += 1
+            sunlight_multiplier = (self.start_counter / 70) * 0.1 * mid_price
+        else:
+            if sunlight < threshold:
+                sunlight_multiplier = 1
+            else:
+                sunlight_multiplier = 0
+                
+                
+        if self.counter // 10000 == 1:
+            self.counter = 0
+            self.counter_beneath_threshold = 0
+            self.start_counter = 0
             
         
+        ideal_mid_price = int(mid_price + multiplier + tariffs_mup + sunlight_multiplier)
+
+
+        print(f"Predicted Price: {ideal_mid_price} at {mid_price} for {product}")
+        undercut_buy = best_bid_price + 1 # best_bid price is the best price where others want to buy from us, 
+        undercut_sell = best_ask_price - 1 # best_ask price is the best price where others want to sell to us
+        
+        bid_pr = min(undercut_buy, ideal_mid_price - self.REGRESSION_SPREAD) # we will shift this by 1 to beat this price
+        sell_pr = max(undercut_sell, ideal_mid_price + self.REGRESSION_SPREAD)
+        
+        num_sold, num_bought = 0, 0
+        cpos = self.cpos[product]
+
+        for price, amount in orders_buy.items():
+            # Current price is greater than predicted next price, so we sell, amount here is positive
+            if (price >= ideal_mid_price + self.REGRESSION_SPREAD and cpos > -self.pos_limits[product] and num_sold < self.ORCHIDS_LIMIT):
+                #or (cpos > 0 and price+1 == ideal_mid_price + self.REGRESSION_SPREAD)):
+              #if (price <= ideal_mid_price - self.SPREAD and cpos > -self.pos_limits[product]):
+                sell_amount = max(-amount, -self.pos_limits[product] - cpos)
+            
+                if sell_amount < 0:
+                    print("SELL", str(sell_amount) + "x", price)
+                    cpos += sell_amount
+                    num_sold += sell_amount
+                    orders.append(Order(product, price, sell_amount))
+        
+        if (cpos > -self.pos_limits[product]):
+            num = -self.pos_limits[product]-cpos
+            orders.append(Order(product, sell_pr, num))
+            cpos += num
+
+        cpos = self.cpos[product]
+        
+        for price, amount in orders_sell.items():
+            # Current lower than predicted next price, so we buy, amount here is negative
+            if (price <= ideal_mid_price - self.REGRESSION_SPREAD and cpos < self.pos_limits[product] and num_bought < self.ORCHIDS_LIMIT):
+                #or (cpos < 0 and price-1 == ideal_mid_price - self.REGRESSION_SPREAD)):
+            #if (price >= ideal_mid_price + self.SPREAD and cpos < self.pos_limits[product]):
+                buy_amount = min(-amount, self.pos_limits[product] - cpos)
+                if buy_amount > 0:
+                    print("BUY", str(buy_amount) + "x", price)
+                    orders.append(Order(product, price, buy_amount))
+                    cpos += buy_amount
+                    num_bought += buy_amount
+        
+
+        if cpos < self.pos_limits[product]:
+            num = self.pos_limits[product] - cpos
+            orders.append(Order(product, bid_pr, num))
+            cpos += num
+
             
         #self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
         return orders
     
     
-    def trade_momentum(self, state: TradingState, product:str):
+    def trade_orchids_observations(self, state: TradingState, product: str):
         
-        orders = []
+        orders: list[Order] = []
+        
         # Orders to be placed on exchange matching engine
         orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
         orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
-        
         min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
-        #mid_price = (best_ask_price + best_bid_price) / 2
+        
         mid_price = statistics.median([max_bid, min_ask])
-
         
-        cpos = self.cpos[product]
+        orchid_obs = state.observations.conversionObservations['ORCHIDS']
         
-        # Generate Signals calculate difference between 26EMA and 12EMA, signal line 9EMA
-        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+        bid_pr, ask_pr, transportFees, exportTariff, importTariff, sunlight, humidity = orchid_obs.bidPrice, orchid_obs.askPrice, orchid_obs.transportFees, orchid_obs.exportTariff, orchid_obs.importTariff, orchid_obs.sunlight, orchid_obs.humidity
         
-        if len(self.starfruit_signal) == 0:
+        if self.orchids_last_obs == []:
+            self.orchids_last_obs = [bid_pr, ask_pr, transportFees, exportTariff, importTariff, sunlight, humidity]
+            self.orchids_last = mid_price
             return orders
+                
+        # Avoiding when bad humidity
+        last_bid, last_ask, last_transportFees, last_exportTariff, last_importTariff, last_sunlight, last_humidity = self.orchids_last_obs
+        last_total_tariffs = last_exportTariff + last_importTariff + last_transportFees
         
-        MACD = self.starfruit_macd[-1]
-        SIGNAL = self.starfruit_signal[-1]
-
-        print(f"MACD: {MACD} SIGNAL: {SIGNAL} at {state.timestamp}")
-        #print(state.own_trades)
+        tariff_signal = 0
+        if exportTariff > last_exportTariff:
+            tariff_signal+= 1
+        if importTariff < last_importTariff:
+            tariff_signal+= 1
+        if transportFees < last_transportFees:
+            tariff_signal+= 1
+        total_tariffs = exportTariff + importTariff + transportFees
         
-        # Buy Signal, MACD > SIGNAL
-        if MACD > SIGNAL:
-            curr_bought = 0
+        buy_orchids , sell_orchids = False, False
+        if (humidity < 60 or humidity > 80) and (last_humidity < 60 or last_humidity > 80) and tariff_signal >= 2:
+            buy_orchids = True
+        
+        if (humidity >= 60 and humidity <= 80) and (last_humidity >= 60 and last_humidity <= 80) and tariff_signal < 2:
+            sell_orchids = True
+  
+        
+        num_bought, num_sold = 0, 0    
+        if buy_orchids:
+            
+            cpos = self.cpos[product]
+        
             for price, amount in orders_sell.items():
-                if cpos < self.pos_limits[product]:
-                    #buy_amount = min(-amount, self.pos_limits[product] - cpos, ORDER_LIMIT - curr_bought)
-                    buy_amount = min(-amount, self.pos_limits[product] - cpos, self.MACD_MAX_ORDER)
+                # Current lower than predicted next price, so we buy, amount here is negative
+                if (cpos < self.pos_limits[product] and num_bought < self.ORCHIDS_LIMIT):
+                    #or (cpos < 0 and price-1 == ideal_mid_price - self.REGRESSION_SPREAD)):
+                #if (price >= ideal_mid_price + self.SPREAD and cpos < self.pos_limits[product]):
+                    buy_amount = min(-amount, self.pos_limits[product] - cpos)
                     if buy_amount > 0:
                         print("BUY", str(buy_amount) + "x", price)
                         orders.append(Order(product, price, buy_amount))
                         cpos += buy_amount
-                        curr_bought += buy_amount
+                        num_bought += buy_amount
                         
-            #Predicted it will decrease and hence we will LONG
-            if cpos < self.pos_limits[product]:
-                buy_amount = self.pos_limits[product] - cpos
-                buy_pr = max(best_ask_price - 1, mid_price - 1)
-                print("BUY", str(buy_amount) + "x", buy_pr)
-                orders.append(Order(product, buy_pr, buy_amount))
-                cpos += buy_amount
-                        
-        # Sell Signal, MACD < SIGNAL
-        elif MACD < SIGNAL:
-            curr_sold = 0
+            vol = min(self.pos_limits[product] - cpos, self.ORCHIDS_LIMIT - num_bought)
+            orders.append(Order(product, max_ask, vol))
+        
+        if sell_orchids:
+            
+            cpos = self.cpos[product]
             for price, amount in orders_buy.items():
-                if cpos > -self.pos_limits[product]:
-                    #sell_amount = max(-amount, -self.pos_limits[product] - cpos, -ORDER_LIMIT - curr_sold)
-                    sell_amount = max(-amount, -self.pos_limits[product] - cpos, -self.MACD_MAX_ORDER)
+            # Current price is greater than predicted next price, so we sell, amount here is positive
+                if (cpos > -self.pos_limits[product] and num_sold < self.ORCHIDS_LIMIT):
+                    #or (cpos > 0 and price+1 == ideal_mid_price + self.REGRESSION_SPREAD)):
+                #if (price <= ideal_mid_price - self.SPREAD and cpos > -self.pos_limits[product]):
+                    sell_amount = max(-amount, -self.pos_limits[product] - cpos)
                     if sell_amount < 0:
                         print("SELL", str(sell_amount) + "x", price)
-                        orders.append(Order(product, price, sell_amount))
                         cpos += sell_amount
-                        curr_sold += sell_amount # sell_amount is negative
-                        
-                        
-            #Predicted it will decrease and hence we will 
-            if cpos > -self.pos_limits[product]:
-                sell_pr = min(best_bid_price + 1, mid_price + 1)
-                sell_amount = -self.pos_limits[product] - cpos
-                print("SELL", str(sell_amount) + "x", sell_pr)
-                orders.append(Order(product, sell_pr, sell_amount))
-                cpos += sell_amount
-                        
+                        num_sold += sell_amount
+                        orders.append(Order(product, price, sell_amount))
+            
+            vol = -self.pos_limits[product] - cpos
+            orders.append(Order(product, min_bid, vol))
+        
+            
+        #self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+        
+        self.orchids_last = mid_price
+        self.orchids_last_obs = [bid_pr, ask_pr, transportFees, exportTariff, importTariff, sunlight, humidity]
         return orders
     
+
     
     
+        
     def calculate_reservation_prices(self, mid_price, PARAMS, product:str):
         #PARAMS['w'] = 0.5 * (PARAMS['y'] ** 2) * (PARAMS['std'] **2) * (self.pos_limits[product] + 1)**2
         PARAMS['w'] = 20

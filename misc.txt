@@ -248,3 +248,76 @@ def grid_trade(self, state: TradingState, product: str):
         
         
         # Adjust Spread based on Order-Book Liquidity 
+
+
+
+def trade_momentum(self, state: TradingState, product:str):
+        
+        orders = []
+        # Orders to be placed on exchange matching engine
+        orders_sell = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items()))
+        orders_buy = collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
+        
+        min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, buy_depth, ask_depth = self.extract_values(orders_sell, orders_buy)
+        #mid_price = (best_ask_price + best_bid_price) / 2
+        mid_price = statistics.median([max_bid, min_ask])
+
+        
+        cpos = self.cpos[product]
+        
+        # Generate Signals calculate difference between 26EMA and 12EMA, signal line 9EMA
+        self.add_to_df(product, [state.timestamp, max_bid, min_bid, max_ask, min_ask, bid_volume, ask_volume, mid_price, best_ask_price, best_bid_price])
+        
+        if len(self.starfruit_signal) == 0:
+            return orders
+        
+        MACD = self.starfruit_macd[-1]
+        SIGNAL = self.starfruit_signal[-1]
+
+        print(f"MACD: {MACD} SIGNAL: {SIGNAL} at {state.timestamp}")
+        #print(state.own_trades)
+        
+        # Buy Signal, MACD > SIGNAL
+        if MACD > SIGNAL:
+            curr_bought = 0
+            for price, amount in orders_sell.items():
+                if cpos < self.pos_limits[product]:
+                    #buy_amount = min(-amount, self.pos_limits[product] - cpos, ORDER_LIMIT - curr_bought)
+                    buy_amount = min(-amount, self.pos_limits[product] - cpos, self.MACD_MAX_ORDER)
+                    if buy_amount > 0:
+                        print("BUY", str(buy_amount) + "x", price)
+                        orders.append(Order(product, price, buy_amount))
+                        cpos += buy_amount
+                        curr_bought += buy_amount
+                        
+            #Predicted it will decrease and hence we will LONG
+            if cpos < self.pos_limits[product]:
+                buy_amount = self.pos_limits[product] - cpos
+                buy_pr = max(best_ask_price - 1, mid_price - 1)
+                print("BUY", str(buy_amount) + "x", buy_pr)
+                orders.append(Order(product, buy_pr, buy_amount))
+                cpos += buy_amount
+                        
+        # Sell Signal, MACD < SIGNAL
+        elif MACD < SIGNAL:
+            curr_sold = 0
+            for price, amount in orders_buy.items():
+                if cpos > -self.pos_limits[product]:
+                    #sell_amount = max(-amount, -self.pos_limits[product] - cpos, -ORDER_LIMIT - curr_sold)
+                    sell_amount = max(-amount, -self.pos_limits[product] - cpos, -self.MACD_MAX_ORDER)
+                    if sell_amount < 0:
+                        print("SELL", str(sell_amount) + "x", price)
+                        orders.append(Order(product, price, sell_amount))
+                        cpos += sell_amount
+                        curr_sold += sell_amount # sell_amount is negative
+                        
+                        
+            #Predicted it will decrease and hence we will 
+            if cpos > -self.pos_limits[product]:
+                sell_pr = min(best_bid_price + 1, mid_price + 1)
+                sell_amount = -self.pos_limits[product] - cpos
+                print("SELL", str(sell_amount) + "x", sell_pr)
+                orders.append(Order(product, sell_pr, sell_amount))
+                cpos += sell_amount
+                        
+        return orders
