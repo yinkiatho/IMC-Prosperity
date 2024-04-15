@@ -31,6 +31,10 @@ ALL_SYMBOLS = [
     'AMETHYSTS',
     'STARFRUIT',
     'ORCHIDS',
+    'CHOCOLATE',
+    'STRAWBERRIES',
+    'GIFT_BASKET',
+    'ROSES'
 ]
 POSITIONABLE_SYMBOLS = [
     'PEARLS',
@@ -49,7 +53,7 @@ POSITIONABLE_SYMBOLS = [
 ]
 first_round = ['AMETHYSTS', 'STARFRUIT']
 snd_round = first_round + ['COCONUTS',  'PINA_COLADAS']
-third_round = snd_round + ['DIVING_GEAR', 'DOLPHIN_SIGHTINGS', 'BERRIES']
+third_round = ['CHOCOLATE', 'STRAWBERRIES', 'GIFT_BASKET', 'ROSES']
 fourth_round = third_round + ['BAGUETTE', 'DIP', 'UKULELE', 'PICNIC_BASKET']
 fifth_round = fourth_round # + secret, maybe pirate gold?
 
@@ -63,7 +67,7 @@ SYMBOLS_BY_ROUND = {
 
 first_round_pst =['AMETHYSTS', 'STARFRUIT']
 snd_round_pst = first_round_pst + ['COCONUTS',  'PINA_COLADAS']
-third_round_pst = snd_round_pst + ['DIVING_GEAR', 'BERRIES']
+third_round_pst = ['CHOCOLATE', 'STRAWBERRIES', 'GIFT_BASKET', 'ROSES']
 fourth_round_pst = third_round_pst + ['BAGUETTE', 'DIP', 'UKULELE', 'PICNIC_BASKET']
 fifth_round_pst = fourth_round_pst # + secret, maybe pirate gold?
 
@@ -149,6 +153,7 @@ current_limits = {
     'PICNIC_BASKET': 70,
     'AMETHYSTS': 20,
     'STARFRUIT': 20,
+    'CHOCOLATE': 250, 'STRAWBERRIES': 350, 'ROSES': 60, 'GIFT_BASKET': 60
 }
 
 def calc_mid(states: dict[int, TradingState], round: int, time: int, max_time: int) -> dict[str, float]:
@@ -175,6 +180,8 @@ def calc_mid(states: dict[int, TradingState], round: int, time: int, max_time: i
 
 def calculate_mid_prices(states: dict[int, TradingState], max_time: int):
     all_mids = {}
+    print(f"Round {round} max time {max_time}")
+    print(f"Symbols by round {SYMBOLS_BY_ROUND_POSITIONABLE[round]}")
     for symbol in SYMBOLS_BY_ROUND_POSITIONABLE[round]:
         all_mids[symbol] = []
         for time, state in states.items():
@@ -562,32 +569,37 @@ if __name__ == "__main__":
                     linear_regression=[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236])
     #simulate_alternative(1, -2, trader, 1*100000, False, True, False)
     
-    max_time = int(input("Max timestamp (1-9)->(1-9)(00_000) or exact number): ") or 999000)
+    #max_time = int(input("Max timestamp (1-9)->(1-9)(00_000) or exact number): ") or 999000)
+    max_time = 1
     if max_time < 10:
         max_time *= 100000
-    round = int(input("Input a round (blank for 4): ") or 4)
+    #round = int(input("Input a round (blank for 4): ") or 4)
+    round = 3
     #day = int(input("Input a day (blank for random): ") or random.randint(1, 3))
-    names_in = input("With bot names (default: y) (y/n): ")
+    #names_in = input("With bot names (default: y) (y/n): ")
     names = True
-    if 'n' in names_in:
-        names = False
-    halfway_in = input("Matching orders halfway (default: n) (y/n): ")
+    #if 'n' in names_in:
+    #    names = False
+    #halfway_in = input("Matching orders halfway (default: n) (y/n): ")
     halfway = True
-    if 'y' in halfway_in:
-        halfway = True
+    #if 'y' in halfway_in:
+    #    halfway = True
     #print(f"Running simulation on round {round} day {day} for time {max_time}")
-    print("Remember to change the trader import")
-    
-    amethysts, starfruit = 0, 0
-    for day in range(-1, 2):
+    #print("Remember to change the trader import")
+    chocolates, strawberries, roses, gift_baskets = 0, 0, 0, 0
+    for day in range(0, 3):
         profits, mids = simulate_alternative(round, day, trader, max_time, names, halfway, False)
         final_key = max(list(profits.keys()))
-        amethysts += profits[final_key]['AMETHYSTS']
-        starfruit += profits[final_key]['STARFRUIT']
+        chocolates += profits[final_key]['CHOCOLATE']
+        strawberries += profits[final_key]['STRAWBERRIES']
+        roses += profits[final_key]['ROSES']
+        gift_baskets += profits[final_key]['GIFT_BASKET']
+        
+    print(f'CHOCOLATE: {chocolates}, STRAWBERRIES: {strawberries}, ROSES: {roses}, GIFT_BASKET: {gift_baskets}, Total: {chocolates+strawberries+roses+gift_baskets}')
         
         
     print("Simulation complete")
-    print(f'AMETHYSTS: {amethysts}, STARFRUIT: {starfruit}')
+    #print(f'AMETHYSTS: {amethysts}, STARFRUIT: {starfruit}')
     #print(profits)
     mids = pd.DataFrame(mids)
     for symbol in SYMBOLS_BY_ROUND_POSITIONABLE[round]:
