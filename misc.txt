@@ -321,3 +321,68 @@ def trade_momentum(self, state: TradingState, product:str):
                 cpos += sell_amount
                         
         return orders
+
+
+    def trade_pair_arbitrage(self, state: TradingState, product1: str, product2: str):
+        order_depths = state.order_depths
+        orders = {product1: [], product2: []}
+        CONSTANT , coef, STD = 1555, 0.342475, 25 #STD is the standard deviation of the spread
+        
+        # Orders to be placed on exchange matching engine
+        orders1_sell, orders1_buy = collections.OrderedDict(sorted(order_depths[product1].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product1].buy_orders.items(), reverse=True))
+        orders2_sell, orders2_buy = collections.OrderedDict(sorted(order_depths[product2].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product2].buy_orders.items(), reverse=True))
+        
+        min_bid1, max_bid1, bid_volume1, best_bid_volume1, min_sell1, max_sell1, sell_volume1, best_ask_volume1, best_bid_price1, best_ask_price1, buy_depth1, ask_depth1 = self.extract_values(orders1_sell, orders1_buy)
+        min_bid2, max_bid2, bid_volume2, best_bid_volume2, min_sell2, max_sell2, sell_volume2, best_ask_volume2, best_bid_price2, best_ask_price2, buy_depth2, ask_depth2 = self.extract_values(orders2_sell, orders2_buy)
+        
+        mid_price1, mid_price2 = (max_bid1 + max_sell1) / 2, (max_bid2 + max_sell2) / 2
+        
+        ideal_price2 = mid_price1 * coef + CONSTANT
+        diff = mid_price2 - ideal_price2
+        
+        cpos1, cpos2 = self.cpos[product1], self.cpos[product2]
+    
+        
+        if diff >= STD: # Arbitrage opportunity, current middle price for product 2 is higher than expected, so we sell product 2 and buy product 1
+            print("Arbitrage opportunity: Buying " + product1 + " and selling " + product2)
+            for price, amount in orders2_buy.items():
+                if ((price >= ideal_price2 + STD) or ((cpos2 > 0) and (price == ideal_price2 + STD))) and cpos2 > -self.pos_limits[product2]:  
+                    sell_amount = max(-amount, -self.pos_limits[product2] - cpos2)
+                    if sell_amount < 0:
+                        print("SELL", str(-amount) + "x", price)
+                        cpos2 -= amount
+                        orders.append(Order(product2, price, sell_amount))
+            
+            for price, amount in orders1_sell.items():
+                if ((price <= mid_price1 - STD) or ((cpos1 < 0) and (price == mid_price1 - STD))) and cpos1 < self.pos_limits[product1]:
+                    buy_amount = min(amount, self.pos_limits[product1] - cpos1)
+                    if buy_amount > 0:
+                        print("BUY", str(amount) + "x", price)
+                        orders.append(Order(product1, price, buy_amount))
+                        cpos1 += amount
+    
+            
+        elif diff <= -STD: # Arbitrage opportunity, current middle price for product 2 is lower than expected, so we sell product 1 and buy product 2
+            print("Arbitrage opportunity: Buying " + product2 + " and selling " + product1)
+            for price, amount in orders1_buy.items():
+                if ((price >= mid_price1 + STD) or ((cpos1 > 0) and (price ==  mid_price1 + STD))) and cpos1 > -self.pos_limits[product1]:  
+                    sell_amount = max(-amount, -self.pos_limits[product1] - cpos1)
+                    if sell_amount < 0:
+                        print("SELL", str(-amount) + "x", price)
+                        cpos1 -= amount
+                        orders.append(Order(product1, price, sell_amount))
+                        
+                        
+            for price, amount in orders2_sell.items():
+                if ((price <= ideal_price2 - STD) or ((cpos2 < 0) and (price == ideal_price2 - STD))) and cpos2 < self.pos_limits[product2]:
+                    buy_amount = min(amount, self.pos_limits[product2] - cpos2)
+                    if buy_amount > 0:
+                        print("BUY", str(amount) + "x", price)
+                        orders.append(Order(product2, price, buy_amount))
+                        cpos2 += amount
+                    
+                
+        self.add_to_df(product1, [state.timestamp, max_bid1, min_bid1, max_sell1, min_sell1, bid_volume1, sell_volume1, mid_price1, best_ask_price1, best_bid_price1])
+        self.add_to_df(product2, [state.timestamp, max_bid2, min_bid2, max_sell2, min_sell2, bid_volume2, sell_volume2, mid_price2, best_ask_price2, best_bid_price2])
+        
+        return orders

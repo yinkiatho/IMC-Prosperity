@@ -1,5 +1,4 @@
 import json
-from datamodel import Order, ProsperityEncoder, Symbol, TradingState, Trade, OrderDepth
 from typing import Any, Dict, List
 import numpy as np
 import math
@@ -7,53 +6,63 @@ import statistics
 import jsonpickle
 import pandas as pd
 import collections
-
+from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
 
 class Logger:
-    # Set this to true, if u want to create
-    # local logs
-    local: bool 
-    # this is used as a buffer for logs
-    # instead of stdout
-    local_logs: dict[int, str] = {}
-
-    def __init__(self, local=False) -> None:
+    def __init__(self) -> None:
         self.logs = ""
-        self.local = local      
+        self.max_log_length = 3750
 
     def print(self, *objects: Any, sep: str = " ", end: str = "\n") -> None:
         self.logs += sep.join(map(str, objects)) + end
 
-    def flush(self, state: TradingState, orders: dict[Symbol, list[Order]]) -> None:
-        output = json.dumps({
-            "state": state,
-            "orders": orders,
-            "logs": self.logs,
-        }, cls=ProsperityEncoder, separators=(",", ":"), sort_keys=True)
-        if self.local:
-            self.local_logs[state.timestamp] = output
-        print(output)
+    def flush(self, state: TradingState, orders: dict[Symbol, list[Order]], conversions: int, trader_data: str) -> None:
+        base_length = len(self.to_json([
+            self.compress_state(state, ""),
+            self.compress_orders(orders),
+            conversions,
+            "",
+            "",
+        ]))
+
+        # We truncate state.traderData, trader_data, and self.logs to the same max. length to fit the log limit
+        max_item_length = (self.max_log_length - base_length) // 3
+
+        print(self.to_json([
+            self.compress_state(state, self.truncate(state.traderData, max_item_length)),
+            self.compress_orders(orders),
+            conversions,
+            self.truncate(trader_data, max_item_length),
+            self.truncate(self.logs, max_item_length),
+        ]))
 
         self.logs = ""
 
-    def compress_state(self, state: TradingState) -> dict[str, Any]:
-        listings = []
-        for listing in state.listings.values():
-            listings.append([listing["symbol"], listing["product"], listing["denomination"]])
+    def compress_state(self, state: TradingState, trader_data: str) -> list[Any]:
+        return [
+            state.timestamp,
+            trader_data,
+            self.compress_listings(state.listings),
+            self.compress_order_depths(state.order_depths),
+            self.compress_trades(state.own_trades),
+            self.compress_trades(state.market_trades),
+            state.position,
+            self.compress_observations(state.observations),
+        ]
 
-        order_depths = {}
-        for symbol, order_depth in state.order_depths.items():
-            order_depths[symbol] = [order_depth.buy_orders, order_depth.sell_orders]
+    def compress_listings(self, listings: dict[Symbol, Listing]) -> list[list[Any]]:
+        compressed = []
+        for listing in listings.values():
+            compressed.append([listing["symbol"], listing["product"], listing["denomination"]])
 
-        return {
-            "t": state.timestamp,
-            "l": listings,
-            "od": order_depths,
-            "ot": self.compress_trades(state.own_trades),
-            "mt": self.compress_trades(state.market_trades),
-            "p": state.pos,
-            "o": state.observations,
-        }
+        return compressed
+
+    def compress_order_depths(self, order_depths: dict[Symbol, OrderDepth]) -> dict[Symbol, list[Any]]:
+        compressed = {}
+        for symbol, order_depth in order_depths.items():
+            compressed[symbol] = [order_depth.buy_orders, order_depth.sell_orders]
+
+        return compressed
 
     def compress_trades(self, trades: dict[Symbol, list[Trade]]) -> list[list[Any]]:
         compressed = []
@@ -61,14 +70,29 @@ class Logger:
             for trade in arr:
                 compressed.append([
                     trade.symbol,
-                    trade.buyer,
-                    trade.seller,
                     trade.price,
                     trade.quantity,
+                    trade.buyer,
+                    trade.seller,
                     trade.timestamp,
                 ])
 
         return compressed
+
+    def compress_observations(self, observations: Observation) -> list[Any]:
+        conversion_observations = {}
+        for product, observation in observations.conversionObservations.items():
+            conversion_observations[product] = [
+                observation.bidPrice,
+                observation.askPrice,
+                observation.transportFees,
+                observation.exportTariff,
+                observation.importTariff,
+                observation.sunlight,
+                observation.humidity,
+            ]
+
+        return [observations.plainValueObservations, conversion_observations]
 
     def compress_orders(self, orders: dict[Symbol, list[Order]]) -> list[list[Any]]:
         compressed = []
@@ -78,8 +102,15 @@ class Logger:
 
         return compressed
 
-# This is provisionary, if no other algorithm works.
-# Better to loose nothing, then dreaming of a gain.
+    def to_json(self, value: Any) -> str:
+        return json.dumps(value, cls=ProsperityEncoder, separators=(",", ":"))
+
+    def truncate(self, value: str, max_length: int) -> str:
+        if len(value) <= max_length:
+            return value
+
+        return value[:max_length - 3] + "..."
+
 
 inner_dict = {
     'TIMESTAMP': [],
@@ -251,7 +282,7 @@ class Trader:
                 result[product] = orchids_orders
             else:
                 continue        
-                
+            
         return result, self.orchids_conversions, ""
     
     
@@ -335,70 +366,6 @@ class Trader:
         # Append to databasez
         return orders
     
-    
-    def trade_pair_arbitrage(self, state: TradingState, product1: str, product2: str):
-        order_depths = state.order_depths
-        orders = {product1: [], product2: []}
-        CONSTANT , coef, STD = 1555, 0.342475, 25 #STD is the standard deviation of the spread
-        
-        # Orders to be placed on exchange matching engine
-        orders1_sell, orders1_buy = collections.OrderedDict(sorted(order_depths[product1].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product1].buy_orders.items(), reverse=True))
-        orders2_sell, orders2_buy = collections.OrderedDict(sorted(order_depths[product2].sell_orders.items())), collections.OrderedDict(sorted(order_depths[product2].buy_orders.items(), reverse=True))
-        
-        min_bid1, max_bid1, bid_volume1, best_bid_volume1, min_sell1, max_sell1, sell_volume1, best_ask_volume1, best_bid_price1, best_ask_price1, buy_depth1, ask_depth1 = self.extract_values(orders1_sell, orders1_buy)
-        min_bid2, max_bid2, bid_volume2, best_bid_volume2, min_sell2, max_sell2, sell_volume2, best_ask_volume2, best_bid_price2, best_ask_price2, buy_depth2, ask_depth2 = self.extract_values(orders2_sell, orders2_buy)
-        
-        mid_price1, mid_price2 = (max_bid1 + max_sell1) / 2, (max_bid2 + max_sell2) / 2
-        
-        ideal_price2 = mid_price1 * coef + CONSTANT
-        diff = mid_price2 - ideal_price2
-        
-        cpos1, cpos2 = self.cpos[product1], self.cpos[product2]
-    
-        
-        if diff >= STD: # Arbitrage opportunity, current middle price for product 2 is higher than expected, so we sell product 2 and buy product 1
-            print("Arbitrage opportunity: Buying " + product1 + " and selling " + product2)
-            for price, amount in orders2_buy.items():
-                if ((price >= ideal_price2 + STD) or ((cpos2 > 0) and (price == ideal_price2 + STD))) and cpos2 > -self.pos_limits[product2]:  
-                    sell_amount = max(-amount, -self.pos_limits[product2] - cpos2)
-                    if sell_amount < 0:
-                        print("SELL", str(-amount) + "x", price)
-                        cpos2 -= amount
-                        orders.append(Order(product2, price, sell_amount))
-            
-            for price, amount in orders1_sell.items():
-                if ((price <= mid_price1 - STD) or ((cpos1 < 0) and (price == mid_price1 - STD))) and cpos1 < self.pos_limits[product1]:
-                    buy_amount = min(amount, self.pos_limits[product1] - cpos1)
-                    if buy_amount > 0:
-                        print("BUY", str(amount) + "x", price)
-                        orders.append(Order(product1, price, buy_amount))
-                        cpos1 += amount
-    
-            
-        elif diff <= -STD: # Arbitrage opportunity, current middle price for product 2 is lower than expected, so we sell product 1 and buy product 2
-            print("Arbitrage opportunity: Buying " + product2 + " and selling " + product1)
-            for price, amount in orders1_buy.items():
-                if ((price >= mid_price1 + STD) or ((cpos1 > 0) and (price ==  mid_price1 + STD))) and cpos1 > -self.pos_limits[product1]:  
-                    sell_amount = max(-amount, -self.pos_limits[product1] - cpos1)
-                    if sell_amount < 0:
-                        print("SELL", str(-amount) + "x", price)
-                        cpos1 -= amount
-                        orders.append(Order(product1, price, sell_amount))
-                        
-                        
-            for price, amount in orders2_sell.items():
-                if ((price <= ideal_price2 - STD) or ((cpos2 < 0) and (price == ideal_price2 - STD))) and cpos2 < self.pos_limits[product2]:
-                    buy_amount = min(amount, self.pos_limits[product2] - cpos2)
-                    if buy_amount > 0:
-                        print("BUY", str(amount) + "x", price)
-                        orders.append(Order(product2, price, buy_amount))
-                        cpos2 += amount
-                    
-                
-        self.add_to_df(product1, [state.timestamp, max_bid1, min_bid1, max_sell1, min_sell1, bid_volume1, sell_volume1, mid_price1, best_ask_price1, best_bid_price1])
-        self.add_to_df(product2, [state.timestamp, max_bid2, min_bid2, max_sell2, min_sell2, bid_volume2, sell_volume2, mid_price2, best_ask_price2, best_bid_price2])
-        
-        return orders
            
     
     def trade_regression(self, state: TradingState, product: str, N: int, coefficients: List[float], intercept: float, ideal_price=None) -> None:
@@ -623,7 +590,6 @@ class Trader:
         mid_prices = {}
         # Initialize Data
         for product in prods:
-            
             if state.order_depths.get(product) == None:
                 continue
             order_sell, order_buy = collections.OrderedDict(sorted(state.order_depths[product].sell_orders.items())), collections.OrderedDict(sorted(state.order_depths[product].buy_orders.items(), reverse=True))
@@ -635,16 +601,18 @@ class Trader:
             self.add_to_cache(product.lower(), mid_prices[product])
     
 
-        excess = mid_prices['GIFT_BASKET'] - 4*mid_prices['CHOCOLATE'] - 6*mid_prices['STRAWBERRIES'] - mid_prices['ROSES'] - 379
-        ideal_price = int(mid_prices['GIFT_BASKET'] - excess)
+        ideal_price = 4*mid_prices['CHOCOLATE'] + 6*mid_prices['STRAWBERRIES'] + mid_prices['ROSES'] + 379
+        excess = mid_prices['GIFT_BASKET'] - ideal_price
         print("Excess: " + str(excess))
         
         # if excess is positive, we sell gift baskets, buy chocolates and strawberries and roses
-        if abs(excess) >= 76 and excess > 0:
+        if excess >= 76*0.5:
+            print("Arbitrage Opportunity: Buying Chocolates, Strawberries and Roses and Selling Gift Baskets")
+            TARGET = best_bid_prices['GIFT_BASKET'] - 1
             # Sell gift baskets
             basket_pos = self.cpos['GIFT_BASKET']
             for price, amount in orders_buy['GIFT_BASKET'].items():
-                if price >= ideal_price + self.REGRESSION_SPREAD and basket_pos > -self.pos_limits['GIFT_BASKET']:
+                if price >= TARGET and basket_pos > -self.pos_limits['GIFT_BASKET']:
                     sell_amount = max(-amount, -self.pos_limits['GIFT_BASKET'] - basket_pos)
                     if sell_amount < 0:
                         print("SELL", str(sell_amount) + "x", price)
@@ -654,60 +622,34 @@ class Trader:
             # Penny Sell
             if basket_pos > -self.pos_limits['GIFT_BASKET']:
                 num = -self.pos_limits['GIFT_BASKET'] - basket_pos
-                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', ideal_price + 4, num))
+                #orders['GIFT_BASKET'].append(Order('GIFT_BASKET', ideal_price + 4, num))
+                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', TARGET, num))
                 basket_pos += num
                         
             
-            # Buying the rest checking if they are currently under price, using SMA5  
-            target_price_choc = self.sma_price('CHOCOLATE') - self.SPREAD                   
+            # Buying the rest checking if they are currently under price
+            orders['CHOCOLATE'] = self.market_make_momentum('CHOCOLATE', best_bid_price=best_bid_prices['CHOCOLATE'], 
+                                                            best_ask_price=best_ask_prices['CHOCOLATE'], 
+                                                            orders_sell=orders_sell['CHOCOLATE'], 
+                                                            orders_buy=orders_buy['CHOCOLATE'], force_buy=True)
             
-            choc_pos = self.cpos['CHOCOLATE']
-            for price, amount in orders_sell['CHOCOLATE'].items():
-                if price <= target_price_choc and choc_pos < self.pos_limits['CHOCOLATE']:
-                    buy_amount = min(amount, self.pos_limits['CHOCOLATE'] - choc_pos)
-                    if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
-                        orders['CHOCOLATE'].append(Order('CHOCOLATE', price, buy_amount))
-                        choc_pos += buy_amount
+            orders['STRAWBERRIES'] = self.market_make_momentum('STRAWBERRIES', best_bid_price=best_bid_prices['STRAWBERRIES'],
+                                                            best_ask_price=best_ask_prices['STRAWBERRIES'],
+                                                            orders_sell=orders_sell['STRAWBERRIES'],
+                                                            orders_buy=orders_buy['STRAWBERRIES'], force_buy=True)
+            orders['ROSES'] = self.market_make_momentum('ROSES', best_bid_price=best_bid_prices['ROSES'],
+                                                            best_ask_price=best_ask_prices['ROSES'],
+                                                            orders_sell=orders_sell['ROSES'],
+                                                            orders_buy=orders_buy['ROSES'], force_buy=True)
             
-            # Penny
-            if choc_pos < self.pos_limits['CHOCOLATE']:
-                num = self.pos_limits['CHOCOLATE'] - choc_pos
-                orders['CHOCOLATE'].append(Order('CHOCOLATE', target_price_choc - 4, num))
-                choc_pos += num
-                
-                
-            target_price_straw = self.sma_price('STRAWBERRIES') - self.SPREAD
-            straw_pos = self.cpos['STRAWBERRIES']
-            for price, amount in orders_sell['STRAWBERRIES'].items():
-                if price <= target_price_straw and straw_pos < self.pos_limits['STRAWBERRIES']:
-                    buy_amount = min(amount, self.pos_limits['STRAWBERRIES'] - straw_pos)
-                    if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
-                        orders['STRAWBERRIES'].append(Order('STRAWBERRIES', price, buy_amount))
-                        straw_pos += buy_amount
-                        
-            # Penny
-            if straw_pos < self.pos_limits['STRAWBERRIES']:
-                num = self.pos_limits['STRAWBERRIES'] - straw_pos
-                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', target_price_straw - 4, num))
-                straw_pos += num
-                
-            target_price_rose = self.sma_price('ROSES') - self.SPREAD
-            rose_pos = self.cpos['ROSES']
-            for price, amount in orders_sell['ROSES'].items():
-                if price <= target_price_rose and rose_pos < self.pos_limits['ROSES']:
-                    buy_amount = min(amount, self.pos_limits['ROSES'] - rose_pos)
-                    if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
-                        orders['ROSES'].append(Order('ROSES', price, buy_amount))
-                        rose_pos += buy_amount
         
-        elif abs(excess) >= 76 and excess < 0:
+        elif excess < -76*0.5:
+            print("Arbitrage Opportunity: Buying Gift Baskets and Selling Chocolates, Strawberries and Roses")
             # if excess is negative, we buy gift baskets, sell chocolates and strawberries and roses
             basket_pos = self.cpos['GIFT_BASKET']
+            TARGET = best_ask_prices['GIFT_BASKET'] + 1
             for price, amount in orders_sell['GIFT_BASKET'].items():
-                if price <= ideal_price - self.SPREAD and basket_pos < self.pos_limits['GIFT_BASKET']:
+                if price <= TARGET and basket_pos < self.pos_limits['GIFT_BASKET']:
                     buy_amount = min(amount, self.pos_limits['GIFT_BASKET'] - basket_pos)
                     if buy_amount > 0:
                         print("BUY", str(buy_amount) + "x", price)
@@ -717,65 +659,27 @@ class Trader:
             # Penny
             if basket_pos < self.pos_limits['GIFT_BASKET']:
                 num = self.pos_limits['GIFT_BASKET'] - basket_pos
-                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', ideal_price - 4, num))
+                #orders['GIFT_BASKET'].append(Order('GIFT_BASKET', ideal_price - 4, num))
+                orders['GIFT_BASKET'].append(Order('GIFT_BASKET', TARGET, num))
                 basket_pos += num
             
             # Selling the rest
-            target_price_choc = self.sma_price('CHOCOLATE') + self.SPREAD
-            choc_pos = self.cpos['CHOCOLATE']
-            for price, amount in orders_buy['CHOCOLATE'].items():
-                if price >= target_price_choc and choc_pos > -self.pos_limits['CHOCOLATE']:
-                    sell_amount = max(-amount, -self.pos_limits['CHOCOLATE'] - choc_pos)
-                    if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
-                        orders['CHOCOLATE'].append(Order('CHOCOLATE', price, sell_amount))
-                        choc_pos += sell_amount
+            orders['CHOCOLATE'] = self.market_make_momentum('CHOCOLATE', best_bid_price=best_bid_prices['CHOCOLATE'], 
+                                                            best_ask_price=best_ask_prices['CHOCOLATE'], 
+                                                            orders_sell=orders_sell['CHOCOLATE'], 
+                                                            orders_buy=orders_buy['CHOCOLATE'], force_sell=True)
             
-            # Penny
-            if choc_pos > -self.pos_limits['CHOCOLATE']:
-                num = -self.pos_limits['CHOCOLATE'] - choc_pos
-                orders['CHOCOLATE'].append(Order('CHOCOLATE', target_price_choc + 4, num))
-                choc_pos += num
-                
-            target_price_straw = self.sma_price('STRAWBERRIES') + self.SPREAD
-            straw_pos = self.cpos['STRAWBERRIES']
-            for price, amount in orders_buy['STRAWBERRIES'].items():
-                if price >= target_price_straw and straw_pos > -self.pos_limits['STRAWBERRIES']:
-                    sell_amount = max(-amount, -self.pos_limits['STRAWBERRIES'] - straw_pos)
-                    if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
-                        orders['STRAWBERRIES'].append(Order('STRAWBERRIES', price, sell_amount))
-                        straw_pos += sell_amount
+            orders['STRAWBERRIES'] = self.market_make_momentum('STRAWBERRIES', best_bid_price=best_bid_prices['STRAWBERRIES'],
+                                                            best_ask_price=best_ask_prices['STRAWBERRIES'],
+                                                            orders_sell=orders_sell['STRAWBERRIES'],
+                                                            orders_buy=orders_buy['STRAWBERRIES'], force_sell=True)
             
-            # Penny
-            if straw_pos > -self.pos_limits['STRAWBERRIES']:
-                num = -self.pos_limits['STRAWBERRIES'] - straw_pos
-                orders['STRAWBERRIES'].append(Order('STRAWBERRIES', target_price_straw + 4, num))
-                straw_pos += num
+            orders['ROSES'] = self.market_make_momentum('ROSES', best_bid_price=best_bid_prices['ROSES'],
+                                                            best_ask_price=best_ask_prices['ROSES'],
+                                                            orders_sell=orders_sell['ROSES'],
+                                                            orders_buy=orders_buy['ROSES'], force_sell=True)
                 
-            target_price_rose = self.sma_price('ROSES') + self.SPREAD
-            rose_pos = self.cpos['ROSES']
-            for price, amount in orders_buy['ROSES'].items():
-                if price >= target_price_rose and rose_pos > -self.pos_limits['ROSES']:
-                    sell_amount = max(-amount, -self.pos_limits['ROSES'] - rose_pos)
-                    if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
-                        orders['ROSES'].append(Order('ROSES', price, sell_amount))
-                        rose_pos += sell_amount
             
-            # Penny
-            if rose_pos > -self.pos_limits['ROSES']:
-                num = -self.pos_limits['ROSES'] - rose_pos
-                orders['ROSES'].append(Order('ROSES', target_price_rose + 4, num))
-                rose_pos += num
-                
-                
-        else:
-            orders['GIFT_BASKET'] = self.market_make_regression('GIFT_BASKET', ideal_price, orders_sell['GIFT_BASKET'], orders_buy['GIFT_BASKET'], self.cpos['GIFT_BASKET'])
-            orders['CHOCOLATE'] = self.market_make_regression('CHOCOLATE', self.sma_price('CHOCOLATE'), orders_sell['CHOCOLATE'], orders_buy['CHOCOLATE'], self.cpos['CHOCOLATE'])
-            orders['STRAWBERRIES'] = self.market_make_regression('STRAWBERRIES', self.sma_price('STRAWBERRIES'), orders_sell['STRAWBERRIES'], orders_buy['STRAWBERRIES'], self.cpos['STRAWBERRIES'])
-            orders['ROSES'] = self.market_make_regression('ROSES', self.sma_price('ROSES'), orders_sell['ROSES'], orders_buy['ROSES'], self.cpos['ROSES'])
-                
         return orders  
     
     
@@ -783,61 +687,59 @@ class Trader:
         attr_name = f'{product.lower()}_cache'
         cache = getattr(self, attr_name)
         
-        if len(cache) < 5:
+        if len(cache) < 10:
             cache.append(data)
         else:
             cache.append(data)
             cache.pop(0)
             
-    def sma_price(self, product):
+    def sma_price(self, product, n):
         attr_name = f'{product.lower()}_cache'
         cache = getattr(self, attr_name)
-        return int(sum(cache) / len(cache))
+        return sum(cache[-n:]) / n
     
+
+    def check_momentum(self, product):
+        sma5, sma10 = self.sma_price(product, 5), self.sma_price(product, 10)
+        if sma5 > sma10:
+            return 1
+        else:
+            return -1
+        
     
-    def market_make_regression(self, product, target_price, orders_sell, orders_buy, curr_pos):
+    def market_make_momentum(self, product, best_bid_price, best_ask_price, orders_sell, orders_buy, force_buy=False, force_sell=False):
         orders = []
+        cpos = self.cpos[product]
         
-        cpos = curr_pos
-        
-        for price, amount in orders_buy.items():
-            # Current price is greater than predicted next price, so we sell, amount here is positive
-            if (price >= target_price + self.REGRESSION_SPREAD and cpos > -self.pos_limits[product]):
-                #or (cpos > 0 and price+1 == target_price + self.REGRESSION_SPREAD)):
-              #if (price <= target_price - self.SPREAD and cpos > -self.pos_limits[product]):
-                sell_amount = max(-amount, -self.pos_limits[product] - cpos)
-            
-                if sell_amount < 0:
-                    print("SELL", str(sell_amount) + "x", price)
-                    cpos += sell_amount
-                    orders.append(Order(product, price, sell_amount))
-
-        if (cpos > -self.pos_limits[product]):
-            num = -self.pos_limits[product]-cpos
-            orders.append(Order(product, target_price + self.SPREAD, num))
-            cpos += num
-
-
-        cpos = curr_pos
-        
-        for price, amount in orders_sell.items():
-            # Current lower than predicted next price, so we buy, amount here is negative
-            if (price <= target_price - self.REGRESSION_SPREAD and cpos < self.pos_limits[product]):
-                #or (cpos < 0 and price-1 == target_price - self.REGRESSION_SPREAD)):
-            #if (price >= target_price + self.SPREAD and cpos < self.pos_limits[product]):
-                buy_amount = min(-amount, self.pos_limits[product] - cpos)
-                if buy_amount > 0:
-                    print("BUY", str(buy_amount) + "x", price)
-                    orders.append(Order(product, price, buy_amount))
-                    cpos += buy_amount
-        
+        if (self.check_momentum(product) == -1 and force_buy == False) or (force_buy == True and force_sell == False):
+            for price, amount in orders_sell.items():
+                if price <= best_bid_price+1 and cpos < self.pos_limits[product]:
+                    buy_amount = min(amount, self.pos_limits[product] - cpos)
+                    if buy_amount > 0:
+                        print("BUY", str(buy_amount) + "x", price)
+                        orders.append(Order(product, price, buy_amount))
+                        cpos += buy_amount
+                        
+            if cpos < self.pos_limits[product]:
+                num = self.pos_limits[product] - cpos
+                orders.append(Order(product, best_bid_price+1, num))
+                cpos += num
                 
-        if cpos < self.pos_limits[product]:
-            num = self.pos_limits[product] - cpos
-            orders.append(Order(product, target_price - self.SPREAD, num))
-            cpos += num
-            
+        elif self.check_momentum(product) == 1 and force_sell == False or (force_buy == False and force_sell == True):
+            for price, amount in orders_buy.items():
+                if price >= best_ask_price-1 and cpos > -self.pos_limits[product]:
+                    sell_amount = max(-amount, -self.pos_limits[product] - cpos)
+                    if sell_amount < 0:
+                        print("SELL", str(sell_amount) + "x", price)
+                        orders.append(Order(product, price, sell_amount))
+                        cpos += sell_amount
+                        
+            if cpos > -self.pos_limits[product]:
+                num = -self.pos_limits[product] - cpos
+                orders.append(Order(product, best_ask_price-1, num))
+                cpos += num
         return orders
+        
     
 
     
