@@ -170,11 +170,12 @@ class Trader:
     strawberries_cache = []
     roses_cache = []    
     gift_basket_cache = []
+    std_perc = 0.5
     
     
     def __init__(self, linear_regression=[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236],
                         SPREAD=3, REGRESSION_SPREAD=1, extra=20, regression_extra=20, lower_bound=0, upper_bound=15, ORCHIDS_LIMIT=200,
-                        price_diff=3, days=3):
+                        price_diff=3, days=3, std_perc = 0.5):
         
         # Hyper Parameters for tuning
         self.linear_regression = linear_regression
@@ -192,6 +193,7 @@ class Trader:
         self.buy = -0.2
         self.sell = 0.2
         self.orchids_conversions = 0            
+        self.std_perc = std_perc
         
     
     def z_score(self, df):
@@ -643,7 +645,7 @@ class Trader:
                                                             orders_buy=orders_buy['ROSES'], force_buy=True)
             
         
-        elif excess < -76*0.5:
+        elif excess < -76*self.std_perc:
             print("Arbitrage Opportunity: Buying Gift Baskets and Selling Chocolates, Strawberries and Roses")
             # if excess is negative, we buy gift baskets, sell chocolates and strawberries and roses
             basket_pos = self.cpos['GIFT_BASKET']

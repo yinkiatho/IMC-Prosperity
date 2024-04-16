@@ -608,67 +608,24 @@ if __name__ == "__main__":
         
         
         
-    #Optimising Spread Stationary
-    # spread_results = []
-    # for extra in range(5, 45, 5):
-    #     for spread in [1.5, 2, 2.5, 3]:
-    #         for lower in range(0, 12, 2):
-    #             for upper in range(3, 18, 3):
-    #                 if lower >= upper:
-    #                     continue
-    #                 new_trader = Trader(SPREAD=spread, extra=extra, lower_bound=lower, upper_bound=upper)
-    #                 round = 1
-    #                 max_time = 2*100000
-    #                 names = False
-    #                 halfway = True
-    #                 amethysts, starfruit = 0, 0
-    #                 for day in range(-2, 1):
-    #                     profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
-    #                     # Tally Results
-    #                     final_key = max(list(profits.keys()))
-    #                     amethysts += profits[final_key]['AMETHYSTS']
-    #                     starfruit += profits[final_key]['STARFRUIT']
-                    
-    #                 spread_results.append((spread, extra, lower, upper, amethysts, starfruit))
-        
-    # spread_results.sort(key=lambda x: x[4], reverse=True)
-    
-    
-    
-    # #Optimising Linear Regression and its Spread
-    # linear_results = []
-    # linear_models = [[6, [0.0, 0.9487079673973507, 0.04882953537331608, 0.0, 0.001374535182263223, 0.0], 5.475369188194236],
-    #                  [7, [0.0, 0.9487063931114131, 0.04883044969764988, 0.0, 0.0013752200395356312, 0.0, 0.0], 5.4752444],
-    #                  [2, [0.9668231762770391, 0.03208869941363146], 5.476125395704912],
-    #                  [3, [0.0, 0.9668226618084425, 0.03208842960676826], 5.480098564658874],
-    #                  [4, [0.9485019252361134, 0.049023304969287314, 0.0, 0.0013868367411401725], 5.475219670820479]]
-    
-    # for linear_model in linear_models:
-    #     for days in range(2, 5):
-    #         for diff in range(1, 5, 1):
-    #             new_trader = Trader(linear_regression=linear_model, days=days, price_diff=diff)
-    #             round = 1
-    #             max_time = 2*100000
-    #             names = False
-    #             halfway = True
-    #             amethysts, starfruit = 0, 0
-    #             for day in range(-2, 1):
-    #                 profits, mids = simulate_alternative(round, day, new_trader, max_time, names, halfway, False)
-    #                 # Tally Results
-    #                 final_key = max(list(profits.keys()))
-    #                 amethysts += profits[final_key]['AMETHYSTS']
-    #                 starfruit += profits[final_key]['STARFRUIT']
-    #             linear_results.append((linear_model[0], days, diff, amethysts, starfruit))
+    # Optimising spread arbitrage baskets
+    # results = []
+    # for perc in [1, 0.75, 0.5, 0.25]:
+    #     chocolates, strawberries, roses, gift_baskets = 0, 0, 0, 0
+    #     for day in range(0, 3):
+    #         new_trader = Trader(SPREAD=3, REGRESSION_SPREAD=1, extra=20, regression_extra=20, std_perc=perc,)
+    #         profits, mids = simulate_alternative(round, day, trader, max_time, names, halfway, False)
+    #         final_key = max(list(profits.keys()))
+    #         chocolates += profits[final_key]['CHOCOLATE']
+    #         strawberries += profits[final_key]['STRAWBERRIES']
+    #         roses += profits[final_key]['ROSES']
+    #         gift_baskets += profits[final_key]['GIFT_BASKET']
             
-    # linear_results.sort(key=lambda x: x[4], reverse=True)
-
-    # print(f"Linear Regression Results Parameter Optimization")
-    # print(linear_results[:min(20, len(linear_results))])
-    
-    # print()
-    
-    # print(f"Spread Results and Extra Parameter Optimization")
-    # print(spread_results[:min(20, len(spread_results))])
+    #     results.append((perc, chocolates, strawberries, roses, gift_baskets))
+        
+    # results.sort(key=lambda x: x[4], reverse=True)
+    # print(f"Results: {results}")
+        
 
     
     
