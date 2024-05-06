@@ -8,109 +8,6 @@ import pandas as pd
 import collections
 from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
 
-class Logger:
-    def __init__(self) -> None:
-        self.logs = ""
-        self.max_log_length = 3750
-
-    def print(self, *objects: Any, sep: str = " ", end: str = "\n") -> None:
-        self.logs += sep.join(map(str, objects)) + end
-
-    def flush(self, state: TradingState, orders: dict[Symbol, list[Order]], conversions: int, trader_data: str) -> None:
-        base_length = len(self.to_json([
-            self.compress_state(state, ""),
-            self.compress_orders(orders),
-            conversions,
-            "",
-            "",
-        ]))
-
-        # We truncate state.traderData, trader_data, and self.logs to the same max. length to fit the log limit
-        max_item_length = (self.max_log_length - base_length) // 3
-
-        print(self.to_json([
-            self.compress_state(state, self.truncate(state.traderData, max_item_length)),
-            self.compress_orders(orders),
-            conversions,
-            self.truncate(trader_data, max_item_length),
-            self.truncate(self.logs, max_item_length),
-        ]))
-
-        self.logs = ""
-
-    def compress_state(self, state: TradingState, trader_data: str) -> list[Any]:
-        return [
-            state.timestamp,
-            trader_data,
-            self.compress_listings(state.listings),
-            self.compress_order_depths(state.order_depths),
-            self.compress_trades(state.own_trades),
-            self.compress_trades(state.market_trades),
-            state.position,
-            self.compress_observations(state.observations),
-        ]
-
-    def compress_listings(self, listings: dict[Symbol, Listing]) -> list[list[Any]]:
-        compressed = []
-        for listing in listings.values():
-            compressed.append([listing["symbol"], listing["product"], listing["denomination"]])
-
-        return compressed
-
-    def compress_order_depths(self, order_depths: dict[Symbol, OrderDepth]) -> dict[Symbol, list[Any]]:
-        compressed = {}
-        for symbol, order_depth in order_depths.items():
-            compressed[symbol] = [order_depth.buy_orders, order_depth.sell_orders]
-
-        return compressed
-
-    def compress_trades(self, trades: dict[Symbol, list[Trade]]) -> list[list[Any]]:
-        compressed = []
-        for arr in trades.values():
-            for trade in arr:
-                compressed.append([
-                    trade.symbol,
-                    trade.price,
-                    trade.quantity,
-                    trade.buyer,
-                    trade.seller,
-                    trade.timestamp,
-                ])
-
-        return compressed
-
-    def compress_observations(self, observations: Observation) -> list[Any]:
-        conversion_observations = {}
-        for product, observation in observations.conversionObservations.items():
-            conversion_observations[product] = [
-                observation.bidPrice,
-                observation.askPrice,
-                observation.transportFees,
-                observation.exportTariff,
-                observation.importTariff,
-                observation.sunlight,
-                observation.humidity,
-            ]
-
-        return [observations.plainValueObservations, conversion_observations]
-
-    def compress_orders(self, orders: dict[Symbol, list[Order]]) -> list[list[Any]]:
-        compressed = []
-        for arr in orders.values():
-            for order in arr:
-                compressed.append([order.symbol, order.price, order.quantity])
-
-        return compressed
-
-    def to_json(self, value: Any) -> str:
-        return json.dumps(value, cls=ProsperityEncoder, separators=(",", ":"))
-
-    def truncate(self, value: str, max_length: int) -> str:
-        if len(value) <= max_length:
-            return value
-
-        return value[:max_length - 3] + "..."
-
 
 inner_dict = {
     'TIMESTAMP': [],
@@ -239,7 +136,7 @@ class Trader:
         return min_bid, max_bid, bid_volume, best_bid_volume, min_ask, max_ask, ask_volume, best_ask_volume, best_bid_price, best_ask_price, len(depth), len(ask_depth)
         
     def calc_next_price(self, current_mid):
-        #print(self.starfruit_cache)
+        ##print(self.starfruit_cache)
         coef = self.linear_regression[1]
         intercept = self.linear_regression[2]
         next_price = intercept
@@ -315,7 +212,7 @@ class Trader:
                     sell_amount = max(-amount, -self.pos_limits[product] - cpos)
                     #sell_amount = -amount
                     if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
+                        #print("SELL", str(sell_amount) + "x", price)
                         cpos += sell_amount
                         orders.append(Order(product, price, sell_amount))
                         
@@ -344,7 +241,7 @@ class Trader:
                 if (price < acceptable_price) and cpos < self.pos_limits[product]:
                     buy_amount = min(-amount, self.pos_limits[product] - cpos)
                     if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
+                        #print("BUY", str(buy_amount) + "x", price)
                         orders.append(Order(product, price, buy_amount))
                         cpos += buy_amount
                         
@@ -420,7 +317,7 @@ class Trader:
                 sell_amount = max(-amount, -self.pos_limits[product] - cpos)
             
                 if sell_amount < 0:
-                    print("SELL", str(sell_amount) + "x", price)
+                    #print("SELL", str(sell_amount) + "x", price)
                     cpos += sell_amount
                     num_sold += 1
                     orders.append(Order(product, price, sell_amount))
@@ -440,7 +337,7 @@ class Trader:
             #if (price >= target_price + self.SPREAD and cpos < self.pos_limits[product]):
                 buy_amount = min(-amount, self.pos_limits[product] - cpos)
                 if buy_amount > 0:
-                    print("BUY", str(buy_amount) + "x", price)
+                    #print("BUY", str(buy_amount) + "x", price)
                     orders.append(Order(product, price, buy_amount))
                     cpos += buy_amount
                     num_bought += 1
@@ -534,7 +431,7 @@ class Trader:
               #if (price <= target_price - self.SPREAD and cpos > -self.pos_limits[product]):
                 sell_amount = max(-amount, -self.pos_limits[product] - cpos)
                 if sell_amount < 0:
-                    print("SELL", str(sell_amount) + "x", price)
+                    #print("SELL", str(sell_amount) + "x", price)
                     cpos += sell_amount
                     total_sell_amount += sell_amount
                     orders.append(Order(product, price, sell_amount))
@@ -569,7 +466,7 @@ class Trader:
               #if (price <= target_price - self.SPREAD and cpos > -self.pos_limits[product]):
                 buy_amount = min(-amount, self.pos_limits[product] - cpos)
                 if buy_amount > 0:
-                    print("BUY", str(buy_amount) + "x", price)
+                    #print("BUY", str(buy_amount) + "x", price)
                     cpos += buy_amount
                     total_buy_amount += buy_amount
                     orders.append(Order(product, price, buy_amount))
@@ -605,11 +502,11 @@ class Trader:
 
         ideal_price = 4*mid_prices['CHOCOLATE'] + 6*mid_prices['STRAWBERRIES'] + mid_prices['ROSES'] + 379
         excess = mid_prices['GIFT_BASKET'] - ideal_price
-        print("Excess: " + str(excess))
+        #print("Excess: " + str(excess))
         
         # if excess is positive, we sell gift baskets, buy chocolates and strawberries and roses
         if excess >= 76*0.5:
-            print("Arbitrage Opportunity: Buying Chocolates, Strawberries and Roses and Selling Gift Baskets")
+            #print("Arbitrage Opportunity: Buying Chocolates, Strawberries and Roses and Selling Gift Baskets")
             TARGET = best_bid_prices['GIFT_BASKET'] - 1
             # Sell gift baskets
             basket_pos = self.cpos['GIFT_BASKET']
@@ -617,16 +514,17 @@ class Trader:
                 if price >= TARGET and basket_pos > -self.pos_limits['GIFT_BASKET']:
                     sell_amount = max(-amount, -self.pos_limits['GIFT_BASKET'] - basket_pos)
                     if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
+                        #print("SELL", str(sell_amount) + "x", price)
                         orders['GIFT_BASKET'].append(Order('GIFT_BASKET', price, sell_amount))
                         basket_pos += sell_amount   
-                        
+
             # Penny Sell
             if basket_pos > -self.pos_limits['GIFT_BASKET']:
                 num = -self.pos_limits['GIFT_BASKET'] - basket_pos
                 #orders['GIFT_BASKET'].append(Order('GIFT_BASKET', ideal_price + 4, num))
                 orders['GIFT_BASKET'].append(Order('GIFT_BASKET', TARGET, num))
                 basket_pos += num
+
                         
             
             # Buying the rest checking if they are currently under price
@@ -646,7 +544,7 @@ class Trader:
             
         
         elif excess < -76*self.std_perc:
-            print("Arbitrage Opportunity: Buying Gift Baskets and Selling Chocolates, Strawberries and Roses")
+            #print("Arbitrage Opportunity: Buying Gift Baskets and Selling Chocolates, Strawberries and Roses")
             # if excess is negative, we buy gift baskets, sell chocolates and strawberries and roses
             basket_pos = self.cpos['GIFT_BASKET']
             TARGET = best_ask_prices['GIFT_BASKET'] + 1
@@ -654,7 +552,7 @@ class Trader:
                 if price <= TARGET and basket_pos < self.pos_limits['GIFT_BASKET']:
                     buy_amount = min(amount, self.pos_limits['GIFT_BASKET'] - basket_pos)
                     if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
+                        #print("BUY", str(buy_amount) + "x", price)
                         orders['GIFT_BASKET'].append(Order('GIFT_BASKET', price, buy_amount))
                         basket_pos += buy_amount
                         
@@ -681,8 +579,29 @@ class Trader:
                                                             orders_sell=orders_sell['ROSES'],
                                                             orders_buy=orders_buy['ROSES'], force_sell=True)
                 
-            
+        # elif abs(excess) < 76*self.std_perc*0.5:
+        #     # We are within the standard deviation, exiting positions
+        #     for product in prods:
+        #         orders[product] = self.exit_positions(product, best_bid_prices[product], best_ask_prices[product])     
         return orders  
+    
+    
+    def exit_positions(self, product, best_bid_price, best_ask_price):
+        cpos = self.cpos[product]
+        orders = []
+        #price = self.ewma_price(product, 5)
+        #price  = self.sma_price(product, 5)
+        # We want to sell our long position
+        if cpos > 0:
+            orders.append(Order(product, best_ask_price-1, -cpos))
+            #orders.append(Order(product, best_bid_price - 1, -cpos))
+            #orders.append(Order(product, price + 1, -cpos))
+        elif cpos < 0:
+            orders.append(Order(product, best_bid_price+1, -cpos))
+            #orders.append(Order(product, best_ask_price + 1, cpos))
+            #orders.append(Order(product, price - 1, cpos))
+            
+        return orders
     
     
     def add_to_cache(self, product, data):
@@ -698,7 +617,12 @@ class Trader:
     def sma_price(self, product, n):
         attr_name = f'{product.lower()}_cache'
         cache = getattr(self, attr_name)
-        return sum(cache[-n:]) / n
+        return int(sum(cache[-n:]) / n)
+    
+    def ewma_price(self, product, n):
+        attr_name = f'{product.lower()}_cache'
+        cache = getattr(self, attr_name)
+        return int(sum([(2**(i+1)) * cache[-(i+1)] for i in range(n)]) / sum([2**(i+1) for i in range(n)]))
     
 
     def check_momentum(self, product):
@@ -712,15 +636,16 @@ class Trader:
     def market_make_momentum(self, product, best_bid_price, best_ask_price, orders_sell, orders_buy, force_buy=False, force_sell=False):
         orders = []
         cpos = self.cpos[product]
-        
+        curr_amount = 0
         if (self.check_momentum(product) == -1 and force_buy == False) or (force_buy == True and force_sell == False):
             for price, amount in orders_sell.items():
                 if price <= best_bid_price+1 and cpos < self.pos_limits[product]:
                     buy_amount = min(amount, self.pos_limits[product] - cpos)
                     if buy_amount > 0:
-                        print("BUY", str(buy_amount) + "x", price)
+                        #print("BUY", str(buy_amount) + "x", price)
                         orders.append(Order(product, price, buy_amount))
                         cpos += buy_amount
+                        curr_amount += buy_amount
                         
             if cpos < self.pos_limits[product]:
                 num = self.pos_limits[product] - cpos
@@ -732,9 +657,10 @@ class Trader:
                 if price >= best_ask_price-1 and cpos > -self.pos_limits[product]:
                     sell_amount = max(-amount, -self.pos_limits[product] - cpos)
                     if sell_amount < 0:
-                        print("SELL", str(sell_amount) + "x", price)
+                        #print("SELL", str(sell_amount) + "x", price)
                         orders.append(Order(product, price, sell_amount))
                         cpos += sell_amount
+                        curr_amount += sell_amount
                         
             if cpos > -self.pos_limits[product]:
                 num = -self.pos_limits[product] - cpos
