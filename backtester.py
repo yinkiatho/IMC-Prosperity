@@ -1,4 +1,4 @@
-from dontlooseshells_algo import Trader
+from algo import Trader
 from datamodel import *
 from typing import Any  #, Callable
 import numpy as np
